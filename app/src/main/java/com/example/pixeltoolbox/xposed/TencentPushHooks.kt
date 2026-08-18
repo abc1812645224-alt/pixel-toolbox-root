@@ -7,8 +7,6 @@
 package com.example.pixeltoolbox.xposed
 
 import io.github.libxposed.api.XposedModule
-import io.github.libxposed.api.annotations.BeforeInvocation
-import io.github.libxposed.api.annotations.XposedHooker
 
 /**
  * 微信/QQ 统一推送环境 Hook。

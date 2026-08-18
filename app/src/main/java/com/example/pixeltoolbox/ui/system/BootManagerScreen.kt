@@ -147,7 +147,7 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                 Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = iOSLabel)
             }
             Text(
-                "自启管理 (方案A 硬裁撤)",
+                "自启管理",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = iOSLabel,

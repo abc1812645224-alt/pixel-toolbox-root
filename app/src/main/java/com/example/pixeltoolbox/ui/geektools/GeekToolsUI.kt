@@ -298,7 +298,7 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
-                Text("⚠️ 注意：强行停止微信后无法收通知，是因为系统限制了普通广播唤醒已停止应用。请确保在 LSPosed/Vector 勾选微信作用域，并在开启后【打开一次微信】完成厂商推送注册！", style = MaterialTheme.typography.labelSmall, color = iOSOrange, modifier = Modifier.padding(horizontal = 4.dp))
+                Text("⚠️ 注意：强行停止微信后无法收通知，是因为系统限制了普通广播唤醒已停止应用。请确保在 LSPosed/Vector 勾选微信作用域，并在开启后【打开一次微信】完成厂商推送注册！", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFF9500), modifier = Modifier.padding(horizontal = 4.dp))
 
                 Spacer(modifier = Modifier.height(10.dp))
 
