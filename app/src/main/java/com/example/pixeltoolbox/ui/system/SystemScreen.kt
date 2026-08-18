@@ -583,30 +583,59 @@ fun SystemScreen(
             Text("步骤一：刷入底层 Zygisk 指纹支付驱动", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = iOSBlue)
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 统一刷入驱动按钮（刷入 zygisk_pay_all.zip，完美同时支持微信 + 支付宝）
-            val isDriverInstalled = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY
-            val onDeployDriver = {
-                coroutineScope.launch(Dispatchers.IO) {
-                    val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_all.zip")
-                    withContext(Dispatchers.Main) {
-                        if (res.isSuccess) {
-                            driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
-                            Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
-                            showFingerprintRebootDialog = true
-                        } else {
-                            Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+            // 两个独立模块刷入按钮：微信独立模块与支付宝独立模块
+            val isWeChatInstalled = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
+            val isAlipayInstalled = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onDeployWeChatModule = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_wechat.zip")
+                        withContext(Dispatchers.Main) {
+                            if (res.isSuccess) {
+                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT
+                                Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
+                                showFingerprintRebootDialog = true
+                            } else {
+                                Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }
-            }
 
-            if (isDriverInstalled) {
-                iOSButton(modifier = Modifier.fillMaxWidth(), onClick = { onDeployDriver() }) {
-                    Text("🟢 Zygisk 微信+支付宝指纹驱动 (已部署/点击覆盖刷入)", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                if (isWeChatInstalled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChatModule() }) {
+                        Text("🟢 微信指纹模块 (已刷入/点击重刷)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChatModule() }) {
+                        Text("⚡ 刷入微信指纹模块", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
                 }
-            } else {
-                iOSOutlineButton(modifier = Modifier.fillMaxWidth(), onClick = { onDeployDriver() }) {
-                    Text("⚡ 一键刷入微信 + 支付宝指纹支付驱动 (v6.1.0)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                val onDeployAlipayModule = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_alipay.zip")
+                        withContext(Dispatchers.Main) {
+                            if (res.isSuccess) {
+                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY
+                                Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
+                                showFingerprintRebootDialog = true
+                            } else {
+                                Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+
+                if (isAlipayInstalled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipayModule() }) {
+                        Text("🟢 支付宝指纹模块 (已刷入/点击重刷)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipayModule() }) {
+                        Text("⚡ 刷入支付宝指纹模块", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
                 }
             }
 
