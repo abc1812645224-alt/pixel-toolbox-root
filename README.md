@@ -1,5 +1,7 @@
 # 像素工具箱 Root 极客版（Pixel Toolbox Root）
 
+![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg) ![Platform](https://img.shields.io/badge/Platform-Android%2012%2B%20(Root)-green.svg) ![Zygisk](https://img.shields.io/badge/Zygisk-Supported-orange.svg)
+
 这是一款专为 Google Pixel 系列手机及广大 Android 极客打造的 **Root 高级定制与性能优化工具箱**。基于 Root 权限、Zygisk 模块驱动与 Xposed 机制，提供硬件级指纹支付、统一推送、CuprumTurbo 铜引擎性能调度、IMS 5G 注入等深度优化。
 
 > 📌 开源地址：<https://github.com/abc1812645224-alt/pixel-toolbox-root>
