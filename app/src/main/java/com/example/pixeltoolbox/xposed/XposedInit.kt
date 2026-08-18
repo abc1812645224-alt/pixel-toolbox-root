@@ -44,6 +44,8 @@ private const val PROC_NEXUS_LAUNCHER = "com.google.android.apps.nexuslauncher"
 private const val PROC_SYSTEMUI = "com.android.systemui"
 private const val PROC_SYSTEM_SERVER = "android"
 private const val PROC_PHONE = "com.android.phone"
+private const val PROC_WECHAT = "com.tencent.mm"
+private const val PROC_QQ = "com.tencent.mobileqq"
 
 /** 供各 Hook 类记录日志（复用 XposedInterface 成员 log，level 用 android.util.Log 数值：3=DEBUG 6=ERROR）。 */
 
@@ -57,7 +59,7 @@ internal data class Toggles(
 ) {
     /** 是否有任意开关开启（用于 onPackageLoaded 早退判定）。 */
     val anyEnabled: Boolean
-        get() = dt2s || hideSearch || hideGestureLine || smsCode || freeForm
+        get() = true
 
     companion object {
         val NONE = Toggles(false, false, false, false, false)
@@ -88,13 +90,13 @@ class XposedInit : XposedModule() {
     override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
         val pkg = param.packageName
 
-        if (!toggles.anyEnabled) return
         if (!hookedPkgs.add(pkg)) return
         try {
             when (pkg) {
                 PROC_NEXUS_LAUNCHER -> LauncherHooks(this, toggles.hideSearch, toggles.dt2s, toggles.hideGestureLine, param.defaultClassLoader).apply()
                 PROC_SYSTEMUI -> SystemUiHooks(this, toggles.hideGestureLine, param.defaultClassLoader).apply()
                 PROC_PHONE -> SmsCodeHooks(this, param.defaultClassLoader).apply()
+                PROC_WECHAT, PROC_QQ -> TencentPushHooks(this, param.defaultClassLoader).apply()
             }
         } catch (t: Throwable) {
             log(6, "XposedInit", "hook failed for $pkg: ${t.message}", t)

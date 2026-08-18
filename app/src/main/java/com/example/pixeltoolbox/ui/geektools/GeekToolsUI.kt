@@ -270,7 +270,7 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("微信 / QQ 厂商推送伪装", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = textColor)
-                        Text("激活微信/QQ 系统内嵌高优先级厂商推送通道", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel)
+                        Text("激活微信/QQ 系统内嵌厂商通道 (包含强行停止 Root 广播唤醒)", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel)
                     }
                     Switch(
                         checked = isTencentSpoofing,
@@ -284,7 +284,7 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                                 if (res.isSuccess) {
                                     isTencentSpoofing = enable
                                     managedPushApps = com.example.pixeltoolbox.services.push.UnifiedPushManager.getManagedApps(context)
-                                    val msg = if (enable) "已开启 微信/QQ 厂商推送伪装" else "已关闭 微信/QQ 伪装"
+                                    val msg = if (enable) "已开启 微信/QQ 伪装与 Root 唤醒白名单" else "已关闭 微信/QQ 伪装"
                                     addLog(msg)
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 }
@@ -296,6 +296,9 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                         )
                     )
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("⚠️ 注意：强行停止微信后无法收通知，是因为系统限制了普通广播唤醒已停止应用。请确保在 LSPosed/Vector 勾选微信作用域，并在开启后【打开一次微信】完成厂商推送注册！", style = MaterialTheme.typography.labelSmall, color = iOSOrange, modifier = Modifier.padding(horizontal = 4.dp))
 
                 Spacer(modifier = Modifier.height(10.dp))
 
