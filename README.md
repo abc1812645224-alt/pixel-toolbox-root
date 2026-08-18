@@ -1,11 +1,32 @@
+# 像素工具箱 Root 极客版（Pixel Toolbox Root）
 
-# 像素工具箱（Pixel Toolbox）
+这是一款专为 Google Pixel 系列手机及广大 Android 极客打造的 **Root 高级定制与性能优化工具箱**。基于 Root 权限、Zygisk 模块驱动与 Xposed 机制，提供硬件级指纹支付、统一推送、CuprumTurbo 铜引擎性能调度、IMS 5G 注入等深度优化。
 
-这是一款专为 Google Pixel 系列手机设计的 **免 Root** 优化工具箱。它基于 [Shizuku](https://shizuku.rikka.app/) 获取系统权限，安全可靠，并支持动态编译。
+> 📌 开源地址：<https://github.com/abc1812645224-alt/pixel-toolbox-root>
 
-> 开源地址：<https://github.com/abc1812645224-alt/pixel-toolbox>
+---
 
-## 功能列表
+## 🌟 核心极客特性
+
+### 1. 💳 硬件级指纹支付环境（FingerprintPay v6.1.0）
+- **Zygisk 底层驱动刷入**：内置最新 v6.1.0 Zygisk 模块部署方案，支持 **多合一全功能版**（推荐：微信/支付宝/QQ/淘宝/云闪付）、**微信独立版** 与 **支付宝独立版** 驱动一键刷入；
+- **Xposed 自动兜底**：兼具底层 Xposed 钩子环境，双重保障支付安全与成功率；
+- **状态感知**：实时高亮显示当前已生效的 Zygisk 驱动模式。
+
+### 2. 📨 开源统一推送服务（xmsf v3.0）
+- **无图标版本集成**：内置 11.1MB 纯净无图标版统一推送服务框架 (`xmsf`)；
+- **媲美 iOS 体验**：实现 0 后台电量占用与毫秒级无感消息推送。
+
+### 3. ⚡ CuprumTurbo 铜引擎性能调度（v21 最新版）
+- **开源算法调优**：结合 CuprumTurbo EAS 能量调度算法，统筹 CPU 调频器、uclamp 与 Task 抢占权重；
+- **三挡智能调速**：
+  - 🍀 **省电挡**：限制前台 CPU 抢占（`uclamp.max = 512`，`schedtune.boost = -15`），绝不强制开启系统暗黑模式或干预系统偏好；
+  - ⚖️ **默认挡**：恢复原生 EAS 动态均衡调度（`schedutil` / `sugov_ext`）；
+  - 🚀 **性能挡**：全内核满血锁频（`uclamp.min = 1024`，`schedtune.boost = 100`），保证高负载与游戏满帧率流畅运行。
+
+---
+
+## 📋 功能列表
 
 ### 网络与信号
 
@@ -28,12 +49,12 @@
 
 ### 通话与系统
 
-9. **Shizuku 通话录音**
-   - 基于 Shizuku 的来电 / 去电自动录音，支持 Opus / AAC 编码、码率调节、音频源选择、忽略匿名来电、自定义保存目录。
+9. **自动通话录音**
+   - 支持来电 / 去电自动双向高清录音，支持 Opus / AAC 编码、码率调节、音频源选择、忽略匿名来电、自定义保存目录。
 10. **时区与时间同步修复**
-    - 强制系统时区为 `亚洲/上海`，并将 NTP 时间服务器更换为阿里云 `ntp.aliyun.com`，解决系统时间慢或不准确的问题，有助于抢票等对毫秒级时间敏感的场景。
-11. **CPU & 系统性能调度模式**
-    - 一键切换省电 / 均衡 / 性能模式，使用系统电源管理指令（saver / balanced / performance）。
+    - 强制系统时区为 `亚洲/上海`，并将 NTP 时间服务器更换为阿里云 `ntp.aliyun.com`，解决系统时间慢或不准确的问题。
+11. **CuprumTurbo 铜引擎性能调度**
+    - 提供省电挡 🍀 / 默认挡 ⚖️ / 性能挡 🚀 三挡智能 CPU 能量调度。
 12. **Pixel 触觉震动强度调校**
     - 调整打字、触摸与通知的系统级触感震动百分比（关闭 / 柔和 / 标准 / 强劲）。
 13. **强力保活服务**
@@ -46,7 +67,7 @@
 15. **GPS 测试**
     - 实时查看卫星分布（GPS / 北斗 / 格洛纳斯 / 伽利略 / 准天顶）、信号强度与定位数据，附卫星地球 3D 视图。
 16. **应用分身**
-    - 为应用创建独立分身实例，与主应用数据完全隔离（仅供学习研究使用）。
+    - 为应用创建独立分身实例，与主应用数据完全隔离。
 17. **极客冰箱**
     - 底层冻结（disable-user）闲置应用，实现零后台电量与内存占用。
 18. **自启管理**
@@ -66,11 +87,13 @@
 25. **暴力清理**
     - 一键清理后台非系统进程与应用缓存。
 26. **极客终端**
-    - 内置 Shizuku 权限的 Shell 终端，可自由执行系统命令。
+    - 内置 Root 权限的 Shell 终端，可自由执行系统命令。
 27. **双击桌面锁屏**
     - 创建桌面快捷方式或一键安装纯净锁屏桌面，实现双击桌面锁屏。
 
-## 编译方法（通过 GitHub Actions）
+---
+
+## 🛠️ 编译方法（通过 GitHub Actions）
 
 本项目支持在 GitHub 云端直接编译，无需在本地安装 Android Studio：
 
@@ -81,48 +104,55 @@
 5. 在 **Artifacts** 区域下载 `app-release` 压缩包。
 6. 解压后将 APK 安装到手机。
 
-## 依赖与准备
+---
 
-使用全部功能前，请在手机上 **安装并激活 Shizuku**。Shizuku 可通过无线调试或电脑连接激活，具体方式请参考其官网文档。
+## 🔑 依赖与准备
 
-## 支持与赞助
+使用全部功能前，请确认：
+1. 手机已获取 **Root 权限**（支持 Magisk / KernelSU / APatch）；
+2. 使用指纹支付模块功能需在 Magisk / KSU / APatch 设置中开启 **Zygisk** 开关。
+
+---
+
+## 🤝 致谢与参考项目
+
+本项目在开发过程中参考并借鉴了以下开源项目及其作者的实现：
+
+- **FingerprintPay**（[Jason Eric](https://github.com/eritpchy/FingerprintPay)，GPL-2.0）– 微信 / 支付宝硬件级指纹支付核心驱动模块 (v6.1.0)
+- **xmsf 统一推送框架**（[UnifiedPush 团队](https://github.com/UnifiedPush)，GPL-3.0）– 统一推送服务无图标版 (v3.0)
+- **CuprumTurbo-Scheduler**（[chenzyadb](https://github.com/chenzyadb/CuprumTurbo-Scheduler)，BSD-3-Clause）– 铜引擎 CPU 与 EAS 性能调度算法 (v21)
+- **ShizuCallRecorder**（[kitsumed](https://github.com/kitsumed/ShizuCallRecorder)，GPL-3.0）– 通话录音核心实现思路
+- **carrier-ims-for-pixel**（[ryfineZ](https://github.com/ryfineZ/carrier-ims-for-pixel)，Apache-2.0）– Pixel 5G / VoLTE / VoWiFi 优化核心实现思路
+- **scrcpy**（Genymobile，Apache-2.0）– 通话录音音频源 / 编码参考
+- **Shizuku**（Rikka Apps，Apache-2.0）– 系统服务接口调用参考
+- **AndResGuard**（360 / shwenzhang，Apache-2.0）– 资源混淆与压缩
+- **AndroidHiddenApiBypass**（LSPosed，Apache-2.0）– 隐藏 API 绕过 (v4.3)
+- **ARSCLib**（REAndroid，Apache-2.0）– Android 二进制资源读写 (v1.2)
+
+完整致谢清单详见 [`docs/credits.md`](docs/credits.md)。
+
+---
+
+## 📜 许可证说明
+
+本项目包含组件许可证说明如下：
+- 本项目自身基于 **GPL-3.0** 协议开源，完整许可证位于根目录 `LICENSE`。
+- **FingerprintPay** 指纹支付组件基于 **GPL-2.0** 开源。
+- **xmsf 统一推送框架** 与 **ShizuCallRecorder** 基于 **GPL-3.0** 开源。
+- **CuprumTurbo-Scheduler** 基于 **BSD-3-Clause** 开源。
+- 其他开源组件大多遵循 **Apache License 2.0**。
+
+---
+
+## ☕ 支持与赞助
 
 如果这个工具箱帮您省下了折腾的时间，或让手中的 Pixel 焕然一新，欢迎扫码请开发者喝杯咖啡。您的每一份心意，都是项目持续打磨与更新的动力，也是让这份热爱走得更远的燃料。
 
 [![赞助二维码](docs/donate_qr.jpg)](docs/donate_qr.jpg)
 
-## 致谢与参考项目
+---
 
-本项目在开发过程中参考并借鉴了以下开源项目及其作者的实现：
+## ⚠️ 商标与隐私说明
 
-- **ShizuCallRecorder**（kitsumed，GPL-3.0）– 通话录音核心实现思路
-- **scrcpy**（Genymobile，Apache-2.0）– 通话录音音频源 / 编码参考
-- **Shizuku**（Rikka Apps，Apache-2.0）– 系统权限桥接方案
-- **AndResGuard**（360 / shwenzhang，Apache-2.0）– 资源混淆与压缩
-- **AndroidHiddenApiBypass**（LSPosed，Apache-2.0）– 隐藏 API 绕过
-- **ARSCLib**（REAndroid，Apache-2.0）– Android 二进制资源读写
-- **carrier-ims**（ryfineZ，Apache-2.0）– Pixel 5G / VoLTE / VoWiFi 优化核心实现思路
-
-完整致谢清单详见 [`docs/credits.md`](docs/credits.md)。
-
-## 许可证
-
-本项目遵循 **GPL‑3.0** 许可证，完整的许可证文本位于项目根目录的 `LICENSE` 文件中。使用、修改、分发本项目代码时必须遵守 GPL‑3.0 的条款。
-
-### 组件许可证说明
-
-- 本项目自身遵循 **GPL-3.0**（"3.0 协议"）。
-- 引用的开源组件大多遵循 **Apache License 2.0**（"2.0 协议"），允许自由使用、修改与分发，需保留版权声明。
-- 其中 **ShizuCallRecorder** 遵循 **GPL-3.0**，因其为直接参考的通话录音核心实现来源，本项目整体以 GPL-3.0 开源以保持兼容。
-- 各组件版权归其原作者所有，详细声明见 `docs/credits.md`。
-
-## 商标声明
-
-Pixel 是 Google LLC 的商标。本应用与 Google LLC 无关，非 Google 官方产品，Google 不对本应用的功能与质量承担任何责任。
-
-## 隐私说明
-
-- 本应用的全部功能均在设备本地完成，**不会上传**任何通话录音、短信内容、应用列表或个人信息到服务器。
-- 通话录音文件默认保存在设备本地存储（Download 目录或用户自选目录），请妥善保管，并在遵守当地法律法规的前提下使用。
-- 短信读取权限仅用于识别运营商流量短信中的流量数值（需用户手动授权），短信内容不会离开设备。
-- 应用崩溃时可能在本机生成崩溃日志文件，仅用于本地排查问题，不会自动上传。
+- **商标声明**：Pixel 是 Google LLC 的商标。本应用与 Google LLC 无关，非 Google 官方产品。
+- **隐私说明**：本应用全部功能均在设备本地完成，**绝不上传**任何个人信息或日志到外部服务器。
