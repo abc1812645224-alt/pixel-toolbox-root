@@ -798,24 +798,19 @@ object RootUtils {
     }
 
     /**
-     * 检测设备当前指纹模块的激活驱动状态
+     * 检测设备上是否已安装微信 Zygisk 指纹模块 (实时检测 Magisk / KSU / APatch 模块目录)
      */
-    fun checkFingerprintDriverState(): ZygiskPayDriverMode {
-        val hasAll = executeCommandOrNull("test -d /data/adb/modules/zygisk-module-xfingerprint-pay-all && echo yes")?.contains("yes") == true
-        if (hasAll) return ZygiskPayDriverMode.ZYGISK_ALL
+    fun isWeChatModuleInstalled(): Boolean {
+        val res = executeCommandOrNull("ls -d /data/adb/modules/*wechat* /data/adb/modules_update/*wechat* 2>/dev/null")
+        return !res.isNullOrBlank() && res.contains("wechat")
+    }
 
-        val hasWechat = executeCommandOrNull("test -d /data/adb/modules/zygisk-module-xfingerprint-pay-wechat && echo yes")?.contains("yes") == true
-        val hasAlipay = executeCommandOrNull("test -d /data/adb/modules/zygisk-module-xfingerprint-pay-alipay && echo yes")?.contains("yes") == true
-
-        if (hasWechat || hasAlipay) return ZygiskPayDriverMode.ZYGISK_WECHAT
-
-        // 检查配置文件是否存在作为 Xposed 兜底依据
-        val wechatFpXml = executeCommandOrNull("test -f /data/system/pixeltoolbox_wechat_fp.xml && echo yes")?.contains("yes") == true
-        val alipayFpXml = executeCommandOrNull("test -f /data/system/pixeltoolbox_alipay_fp.xml && echo yes")?.contains("yes") == true
-
-        if (wechatFpXml || alipayFpXml) return ZygiskPayDriverMode.XPOSED_FALLBACK
-
-        return ZygiskPayDriverMode.NOT_ACTIVE
+    /**
+     * 检测设备上是否已安装支付宝 Zygisk 指纹模块 (实时检测 Magisk / KSU / APatch 模块目录)
+     */
+    fun isAlipayModuleInstalled(): Boolean {
+        val res = executeCommandOrNull("ls -d /data/adb/modules/*alipay* /data/adb/modules_update/*alipay* 2>/dev/null")
+        return !res.isNullOrBlank() && res.contains("alipay")
     }
 
     /**

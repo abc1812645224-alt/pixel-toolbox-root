@@ -540,10 +540,13 @@ fun SystemScreen(
         }
     }
 
-    var driverMode by remember { mutableStateOf(RootUtils.ZygiskPayDriverMode.NOT_ACTIVE) }
+    var isWeChatModuleInstalled by remember { mutableStateOf(false) }
+    var isAlipayModuleInstalled by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         coroutineScope.launch(Dispatchers.IO) {
-            driverMode = RootUtils.checkFingerprintDriverState()
+            isWeChatModuleInstalled = RootUtils.isWeChatModuleInstalled()
+            isAlipayModuleInstalled = RootUtils.isAlipayModuleInstalled()
         }
     }
 
@@ -553,47 +556,30 @@ fun SystemScreen(
                 Text("微信 / 支付宝指纹支付 (v6.1.0)", style = MaterialTheme.typography.titleLarge, color = iOSLabel, modifier = Modifier.weight(1f))
                 Surface(
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    color = when (driverMode) {
-                        RootUtils.ZygiskPayDriverMode.ZYGISK_ALL, RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT, RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> Color(0xFFE8F5E9)
-                        RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> Color(0xFFFFF8E1)
-                        else -> Color(0xFFFFEBEE)
-                    }
+                    color = if (isWeChatModuleInstalled || isAlipayModuleInstalled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
                 ) {
                     Text(
-                        when (driverMode) {
-                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALL -> "Zygisk 全功能 🟢"
-                            RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT -> "Zygisk 硬件级 🟢"
-                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> "Zygisk 硬件级 🟢"
-                            RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> "Xposed 兜底 🟡"
-                            else -> "未激活 🔴"
-                        },
-                        color = when (driverMode) {
-                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALL, RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT, RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> Color(0xFF2E7D32)
-                            RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> Color(0xFFF57F17)
-                            else -> Color(0xFFC62828)
-                        },
+                        if (isWeChatModuleInstalled || isAlipayModuleInstalled) "Zygisk 硬件级 🟢" else "未激活 🔴",
+                        color = if (isWeChatModuleInstalled || isAlipayModuleInstalled) Color(0xFF2E7D32) else Color(0xFFC62828),
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
             }
-            Text("支持最新 FingerprintPay v6.1.0 驱动，刷入后微信与支付宝指纹支付可同时完美生效！兼具 Toolbox 内置 Xposed 自动兜底", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Text("支持最新 FingerprintPay v6.1.0 驱动，实时检测 Magisk / KernelSU / APatch 模块状态！兼具 Toolbox 内置 Xposed 自动兜底", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
             
             Spacer(modifier = Modifier.height(14.dp))
             Text("步骤一：刷入底层 Zygisk 指纹支付驱动", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = iOSBlue)
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 两个独立模块刷入按钮：微信独立模块与支付宝独立模块
-            val isWeChatInstalled = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
-            val isAlipayInstalled = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY || driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
-
+            // 两个独立模块刷入按钮：微信独立模块与支付宝独立模块（根据底层模块目录存在与否实时高亮）
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val onDeployWeChatModule = {
                     coroutineScope.launch(Dispatchers.IO) {
                         val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_wechat.zip")
                         withContext(Dispatchers.Main) {
                             if (res.isSuccess) {
-                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT
+                                isWeChatModuleInstalled = true
                                 Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
                                 showFingerprintRebootDialog = true
                             } else {
@@ -603,9 +589,9 @@ fun SystemScreen(
                     }
                 }
 
-                if (isWeChatInstalled) {
+                if (isWeChatModuleInstalled) {
                     iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChatModule() }) {
-                        Text("🟢 微信指纹模块 (已刷入/点击重刷)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                        Text("🟢 微信指纹模块\n(已刷入/点击覆盖刷入)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                     }
                 } else {
                     iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChatModule() }) {
@@ -618,7 +604,7 @@ fun SystemScreen(
                         val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_alipay.zip")
                         withContext(Dispatchers.Main) {
                             if (res.isSuccess) {
-                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY
+                                isAlipayModuleInstalled = true
                                 Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
                                 showFingerprintRebootDialog = true
                             } else {
@@ -628,9 +614,9 @@ fun SystemScreen(
                     }
                 }
 
-                if (isAlipayInstalled) {
+                if (isAlipayModuleInstalled) {
                     iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipayModule() }) {
-                        Text("🟢 支付宝指纹模块 (已刷入/点击重刷)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                        Text("🟢 支付宝指纹模块\n(已刷入/点击覆盖刷入)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                     }
                 } else {
                     iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipayModule() }) {
@@ -649,7 +635,7 @@ fun SystemScreen(
                     isWeChatPayActive = target
                     coroutineScope.launch(Dispatchers.IO) {
                         if (target) {
-                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_wechat_fp.xml; rm -rf /data/adb/modules/xfingerprint-pay-wechat 2>/dev/null")
+                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_wechat_fp.xml")
                         } else {
                             RootUtils.executeCommand("rm -f /data/system/pixeltoolbox_wechat_fp.xml")
                         }
@@ -671,7 +657,7 @@ fun SystemScreen(
                     isAlipayActive = target
                     coroutineScope.launch(Dispatchers.IO) {
                         if (target) {
-                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_alipay_fp.xml; rm -rf /data/adb/modules/xfingerprint-pay-alipay 2>/dev/null")
+                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_alipay_fp.xml")
                         } else {
                             RootUtils.executeCommand("rm -f /data/system/pixeltoolbox_alipay_fp.xml")
                         }
