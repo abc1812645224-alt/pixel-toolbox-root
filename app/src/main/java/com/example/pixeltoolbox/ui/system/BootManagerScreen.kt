@@ -219,20 +219,24 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                 modifier = Modifier.weight(1f),
                 onClick = {
                     if (isBatchProcessing || isLoading) return@iOSOutlineButton
-                    val toDisable = filteredList.filter { !it.isDisabled }
+                    if (activeTab == BootFilterTab.SYSTEM || activeTab == BootFilterTab.DISABLED_SYSTEM) {
+                        Toast.makeText(context, "⚠️ 为保障系统稳定，禁止批量一键禁用系统组件！请切至【第三方】页操作。", Toast.LENGTH_LONG).show()
+                        return@iOSOutlineButton
+                    }
+                    val toDisable = filteredList.filter { !it.isDisabled && !it.isSystem }
                     if (toDisable.isEmpty()) {
-                        Toast.makeText(context, "当前视图中没有可禁用的应用", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "当前视图中没有可禁用的第三方应用", Toast.LENGTH_SHORT).show()
                         return@iOSOutlineButton
                     }
                     isBatchProcessing = true
                     coroutineScope.launch(Dispatchers.IO) {
                         for (item in toDisable) {
-                            val cmd = "pm disable '${item.fullComponent}' 2>/dev/null; cmd appops set ${item.packageName} RUN_IN_BACKGROUND deny"
+                            val cmd = "cmd appops set ${item.packageName} RUN_IN_BACKGROUND deny; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND deny"
                             ShizukuUtils.executeCommand(cmd)
                         }
                         withContext(Dispatchers.Main) {
                             isBatchProcessing = false
-                            Toast.makeText(context, "已批量限制 ${toDisable.size} 个自启接收器", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已批量限制 ${toDisable.size} 个第三方应用后台自启", Toast.LENGTH_SHORT).show()
                             reloadScan()
                         }
                     }
@@ -253,12 +257,12 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                     isBatchProcessing = true
                     coroutineScope.launch(Dispatchers.IO) {
                         for (item in toEnable) {
-                            val cmd = "pm enable '${item.fullComponent}' 2>/dev/null; cmd appops set ${item.packageName} RUN_IN_BACKGROUND allow"
+                            val cmd = "pm enable '${item.packageName}' 2>/dev/null; cmd appops set ${item.packageName} RUN_IN_BACKGROUND allow; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND allow"
                             ShizukuUtils.executeCommand(cmd)
                         }
                         withContext(Dispatchers.Main) {
                             isBatchProcessing = false
-                            Toast.makeText(context, "已批量恢复 ${toEnable.size} 个自启接收器", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已批量恢复 ${toEnable.size} 个应用后台自启", Toast.LENGTH_SHORT).show()
                             reloadScan()
                         }
                     }
