@@ -207,6 +207,12 @@ class CarrierConfigInstrumentation : Instrumentation() {
                         CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY,
                         intArrayOf(1, 2)
                     )
+                    // 开启多载波聚合与 5G 快速选网
+                    pb.putBoolean("carrier_supports_ss_ca_bool", true)
+                    pb.putBoolean("carrier_supports_tdd_ca_bool", true)
+                    pb.putBoolean("carrier_supports_fdd_ca_bool", true)
+                    pb.putBoolean("carrier_supports_nr_dc_bool", true)
+                    pb.putBoolean("perform_nr_sa_fast_camp_bool", true)
                 }
                 if (arguments.getBoolean(KEY_VONR, false) && Build.VERSION.SDK_INT >= 34) {
                     pb.putBoolean(CarrierConfigManager.KEY_VONR_ENABLED_BOOL, true)

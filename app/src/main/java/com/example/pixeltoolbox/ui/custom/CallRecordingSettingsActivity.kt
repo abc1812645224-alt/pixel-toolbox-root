@@ -14,7 +14,9 @@
 package com.example.pixeltoolbox.ui.custom
 
 import com.example.pixeltoolbox.integrations.scrcpy.ScrcpyAudioSource
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -52,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.pixeltoolbox.data.AppPreferences
 import com.example.pixeltoolbox.integrations.scrcpy.ScrcpyAudioCodec
 import com.example.pixeltoolbox.system.storage.SafHelper
@@ -118,6 +122,20 @@ private fun CallRecordingSettingsScreen(onBack: () -> Unit) {
             AppLogger.i("CallRecordingSettings: SAF folder selected: name=${SafHelper.getFolderDisplayNameOrNull(context, uri)} uri=$uri")
         } else {
             AppLogger.i("CallRecordingSettings: SAF picker cancelled")
+        }
+    }
+
+    // RECORD_AUDIO 运行时权限：原生 AudioRecord 引擎必需，进入设置页时检查并请求
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        AppLogger.i(if (granted) "CallRecordingSettings: RECORD_AUDIO granted" else "CallRecordingSettings: RECORD_AUDIO denied")
+    }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
@@ -185,10 +203,16 @@ private fun CallRecordingSettingsScreen(onBack: () -> Unit) {
                 Column {
                     Text("码率", style = MaterialTheme.typography.titleMedium, color = iOSLabel)
                     Spacer(Modifier.height(4.dp))
-                    Text("码率越高音质越好，文件体积越大", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = iOSSecondaryLabel)
+                    Text("Root 原生 HD 引擎已支持最高 48kHz / 256kbps 广播级清晰度", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = iOSSecondaryLabel)
                     Spacer(Modifier.height(12.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(32000 to "32 kbps", 48000 to "48 kbps", 64000 to "64 kbps", 96000 to "96 kbps", 128000 to "128 kbps").forEach { (bps, label) ->
+                    listOf(
+                        64000 to "64 kbps",
+                        96000 to "96 kbps",
+                        128000 to "128 kbps (高清)",
+                        192000 to "192 kbps (超清)",
+                        256000 to "256 kbps (极清)"
+                    ).forEach { (bps, label) ->
                         ChoiceChip(
                             label = label,
                             selected = bitRate == bps,

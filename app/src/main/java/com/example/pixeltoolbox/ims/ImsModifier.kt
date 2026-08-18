@@ -2,177 +2,269 @@
  * Pixel Toolbox (像素工具箱)
  * Copyright (C) 2026 Pixel Toolbox Project
  * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 package com.example.pixeltoolbox.ims
 
-import android.content.Context
-import android.os.Build
-import android.os.PersistableBundle
-import android.os.SystemClock
-import android.telephony.CarrierConfigManager
-import android.telephony.SubscriptionManager
+import java.io.File
 
+/**
+ * CarrierConfig 注入器（Root 直改 XML 方案）。
+ *
+ * Android 17 上 ICarrierConfigLoader.overrideConfig() 已被 CVE-2025-48617 封堵，
+ * persist.dbg.* setprop 也已失效。唯一稳定生效的路径是直接改写 carrier config 持久化文件
+ * /data/user_de/0/com.android.phone/files/carrierconfig-<package>-<iccid>-<carrierId>.xml，
+ * 然后 killall com.android.phone 触发重载。
+ *
+ * 因 root 进程（app_process）受 selinux 约束，无法经 SubscriptionManager 读取 ICCID，
+ * 故采用「全卡处理」策略：列出目录下所有 carrierconfig-*.xml（排除 nosim），逐文件注入/还原。
+ * 协议：args[0] = "key=value,key=value,..."（注入）或 "restore"（还原）；args[1] 预留 subId，当前忽略。
+ */
 object ImsModifier {
+    private const val BACKUP_DIR = "/data/local/tmp/pixeltoolbox_carrier_backup"
+    private const val LOG_FILE = "/data/local/tmp/pixeltoolbox_ims.log"
+    /** 注入清单：记录本次真正写入的 key，回读只认此清单，避免运营商默认 true 被误判为已注入 */
+    private const val INJECTED_FILE = "/data/local/tmp/pixeltoolbox_injected.txt"
+
+    /**
+     * 语音兜底 key：VoLTE / ViLTE / UT / VoNR。
+     * 与 16 个 5G 优化开关解耦：一键还原、开机兜底都会无条件保留这组语音能力，
+     * 保证任何情况下至少能接打电话（4G 走 VoLTE、5G 走 VoNR）。
+     */
+    private val VOICE_FALLBACK_KEYS = listOf("volte", "vilte", "ut", "vonr")
+    private val VOICE_FALLBACK_TOGGLES: Map<String, Boolean> = VOICE_FALLBACK_KEYS.associateWith { true }
+
+    /** 同时写 stdout（RootUtils 捕获进 logcat）与持久化日志文件，便于事后排查 */
+    private fun log(msg: String) {
+        val line = "${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())} $msg"
+        println(line)
+        try {
+            File(LOG_FILE).appendText("$line\n")
+        } catch (_: Exception) {}
+    }
+
+    private fun listXmlFiles(filesDir: File): List<File> {
+        return try {
+            filesDir.listFiles()?.filter {
+                it.name.startsWith("carrierconfig-") &&
+                    it.name.endsWith(".xml") &&
+                    !it.name.contains("nosim")
+            } ?: emptyList()
+        } catch (e: Exception) {
+            log("listFiles failed: ${e.javaClass.simpleName}: ${e.message}")
+            emptyList()
+        }
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
-        try {
-            android.os.Looper.prepareMainLooper()
-        } catch (e: Exception) {}
-
-        // Android 17: catch Shizuku init failure in app_process context
-        try {
-            Class.forName("rikka.shizuku.Shizuku")
-        } catch (_: Throwable) {}
-
-        // defer cleanup
-        var am: Any? = null
+        try { android.os.Looper.prepareMainLooper() } catch (_: Exception) {}
 
         try {
-            val groupBasic = args.getOrNull(0)?.toBoolean() ?: false
-            val group5gCore = args.getOrNull(1)?.toBoolean() ?: false
-            val groupUiEnhancement = args.getOrNull(2)?.toBoolean() ?: false
-            val selectedSubId = args.getOrNull(3)?.toInt() ?: -1
+            val rawArg = args.getOrNull(0) ?: ""
+            log("start arg0=$rawArg arg1=${args.getOrNull(1)}")
 
-            // ───── 提权：startDelegateShellPermissionIdentity ─────
-            // Android 17 禁止 shell UID 直接调用 carrier_config 服务的
-            // overrideConfig。对齐 CarrierConfigWriter：先获取 IActivityManager，
-            // 通过 ShizukuBinderWrapper + startDelegateShellPermissionIdentity
-            // 将 shell UID 提升为 app 自身 UID，再调用 CarrierConfigManager。
-            var waited = 0
-            while (!rikka.shizuku.Shizuku.pingBinder() && waited < 50) {
-                SystemClock.sleep(100)
-                waited++
+            val filesDir = File("/data/user_de/0/com.android.phone/files")
+            log("filesDir exists=${filesDir.exists()} isDir=${filesDir.isDirectory}")
+
+            // 就绪重试：phone 重建 carrier config 期间目录可能短暂读不到，等待重试
+            var xmlFiles = listXmlFiles(filesDir)
+            var attempts = 0
+            while (xmlFiles.isEmpty() && attempts < 10) {
+                attempts++
+                log("no carrier config xml, retry $attempts/10")
+                Thread.sleep(1000)
+                xmlFiles = listXmlFiles(filesDir)
             }
 
-            val smClass = Class.forName("android.os.ServiceManager")
-            val activityBinder = smClass.getDeclaredMethod("getService", String::class.java)
-                .invoke(null, "activity") as android.os.IBinder
-            val iamStub = Class.forName("android.app.IActivityManager\$Stub")
-            val asInterfaceMethod = iamStub.declaredMethods.first { m ->
-                m.name == "asInterface" && m.parameterTypes.size == 1 &&
-                android.os.IBinder::class.java.isAssignableFrom(m.parameterTypes[0])
+            if (xmlFiles.isEmpty()) {
+                val rawList = try { filesDir.list()?.toList() } catch (e: Exception) { "list failed: ${e.message}" }
+                log("ERROR: no carrier config xml after $attempts retries; raw list=$rawList")
+                println("ERROR: no carrier config xml found")
+                System.exit(1)
+                return
             }
-            am = asInterfaceMethod.invoke(
-                null,
-                rikka.shizuku.ShizukuBinderWrapper(activityBinder)
-            )
-            val osClass = Class.forName("android.system.Os")
-            val uid = osClass.getDeclaredMethod("getuid").invoke(null) as Int
-            am.javaClass.getDeclaredMethod(
-                "startDelegateShellPermissionIdentity",
-                Int::class.javaPrimitiveType,
-                Array<String>::class.java
-            ).invoke(am, uid, null)
+            log("found ${xmlFiles.size} xml: ${xmlFiles.joinToString(", ") { it.name }}")
 
-            // ───── 构建 CarrierConfig ─────
-            val atClass = Class.forName("android.app.ActivityThread")
-            val at = atClass.getMethod("systemMain").invoke(null)
-            val context = atClass.getMethod("getSystemContext").invoke(at) as Context
+            val backupDir = File(BACKUP_DIR)
+            if (!backupDir.exists()) backupDir.mkdirs()
 
-            val cm = context.getSystemService(CarrierConfigManager::class.java)!!
-            val sm = context.getSystemService(SubscriptionManager::class.java)!!
-
-            val effectiveSubId = if (selectedSubId == -1) {
-                try {
-                    val ids = sm.javaClass.getMethod("getActiveSubscriptionIdList").invoke(sm) as IntArray
-                    ids.firstOrNull() ?: SubscriptionManager.getDefaultDataSubscriptionId()
-                } catch (e: Exception) {
-                    SubscriptionManager.getDefaultDataSubscriptionId()
+            if (rawArg == "restore") {
+                // 语音兜底：还原官方默认后自动叠加 VoLTE/ViLTE/UT/VoNR 语音能力。
+                // 与 16 个 5G 优化开关解耦——无论用户开启哪些 5G 开关，还原后语音兜底始终保留，
+                // 保证至少能接打电话（4G 走 VoLTE、5G 走 VoNR）。
+                var restored = 0
+                for (xmlFile in xmlFiles) {
+                    val backup = File(backupDir, xmlFile.name)
+                    if (backup.exists()) {
+                        // 1. 备份覆盖：还原为注入前的官方原始配置（清掉 5G 优化 key 残留）
+                        val base = backup.readText()
+                        // 2. 叠加语音兜底 key（volte/vilte/ut/vonr），保证还原后语音能力仍在
+                        val withVoice = applyToggles(base, VOICE_FALLBACK_TOGGLES)
+                        xmlFile.writeText(withVoice)
+                        restored++
+                    }
                 }
+                if (restored > 0) {
+                    killPhone()
+                    // 注入清单只保留语音兜底 key（UI 回读显示语音已开、5G 优化开关为关）
+                    File(INJECTED_FILE).writeText(VOICE_FALLBACK_KEYS.joinToString(","))
+                    log("restored $restored xml + voice fallback keys, phone killed")
+                    println("RESTORED:$restored")
+                } else {
+                    log("ERROR: no backup found in $backupDir")
+                    println("ERROR: no backup found")
+                    System.exit(1)
+                    return
+                }
+            } else if (rawArg == "read") {
+                // 回读模式：读注入清单，只认真正注入过的 key（避免运营商默认 true 被误判为已开启）
+                val injectedKeys = try {
+                    File(INJECTED_FILE).readText().trim().split(',').filter { it.isNotBlank() }.toSet()
+                } catch (e: Exception) { emptySet() }
+                val keys = listOf("volte", "vilte", "ut", "vowifi", "nr_5g", "vonr", "cross_sim", "lte_4g", "5g_signal", "5ga_icon")
+                val out = keys.joinToString(",") { "$it=${if (it in injectedKeys) "1" else "0"}" }
+                log("read states (from injected list): $out")
+                println("STATES:$out")
+                System.exit(0)
+                return
             } else {
-                selectedSubId
-            }
-
-            val b = PersistableBundle()
-
-            if (groupBasic) {
-                b.putBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL, false)
-                b.putBoolean(CarrierConfigManager.KEY_HIDE_LTE_PLUS_DATA_ICON_BOOL, false)
-
-                b.putBoolean(CarrierConfigManager.KEY_CARRIER_WFC_IMS_AVAILABLE_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_CARRIER_WFC_SUPPORTS_WIFI_ONLY_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_EDITABLE_WFC_MODE_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_EDITABLE_WFC_ROAMING_MODE_BOOL, true)
-                b.putBoolean("show_wifi_calling_icon_in_status_bar_bool", true)
-                b.putInt("wfc_spn_format_idx_int", 6)
-
-                b.putBoolean(CarrierConfigManager.KEY_CARRIER_VT_AVAILABLE_BOOL, true)
-                b.putBoolean(CarrierConfigManager.KEY_CARRIER_SUPPORTS_SS_OVER_UT_BOOL, true)
-            }
-
-            if (group5gCore) {
-                b.putIntArray(CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY, intArrayOf(1, 2))
-                if (Build.VERSION.SDK_INT >= 34) {
-                    b.putBoolean(CarrierConfigManager.KEY_VONR_ENABLED_BOOL, true)
-                    b.putBoolean(CarrierConfigManager.KEY_VONR_SETTING_VISIBILITY_BOOL, true)
+                val toggle = mutableMapOf<String, Boolean>()
+                rawArg.split(',').forEach { kv ->
+                    val p = kv.split('=')
+                    if (p.size == 2) toggle[p[0]] = p[1] == "1"
                 }
-                b.putInt("nr_sa_disable_policy_int", 0)
-                b.putBoolean("carrier_cross_sim_ims_available_bool", true)
-                b.putBoolean("enable_cross_sim_calling_on_opportunistic_data_bool", true)
-            }
 
-            if (groupUiEnhancement) {
-                b.putBoolean("show_4g_for_lte_data_icon_bool", true)
-                val thresholds = intArrayOf(-128, -118, -108, -98)
-                b.putIntArray(CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY, thresholds)
-                b.putIntArray(CarrierConfigManager.KEY_5G_NR_SSRSRQ_THRESHOLDS_INT_ARRAY, intArrayOf(-38, -28, -18, -8))
-                b.putIntArray(CarrierConfigManager.KEY_5G_NR_SSSINR_THRESHOLDS_INT_ARRAY, intArrayOf(-23, -13, -3, 7))
-                // 5G+ 带宽阈值：四大运营商（移动/联通/电信/广电）NR 带宽普遍为 100MHz，
-                // 阈值设为 100MHz(100000kHz)，实际带宽 >=100MHz 即触发 5G+（NR_ADVANCED）。
-                b.putInt("nr_advanced_threshold_bandwidth_khz_int", 100000)
-                b.putBoolean("include_lte_for_nr_advanced_threshold_bandwidth_bool", false)
-                b.putIntArray("additional_nr_advanced_bands_int_array", intArrayOf(1, 3, 8, 28, 41, 78, 79))
-                b.putString("5g_icon_configuration_string", "connected_mmwave:5G_Plus,connected:5G,connected_rrc_idle:5G,not_restricted_rrc_idle:5G,not_restricted_rrc_con:5G")
-                b.putInt("nr_advanced_capable_pco_id_int", 0)
-            }
-
-            b.putInt("pixel_toolbox_config_version", 3)
-            b.putString(CarrierConfigManager.KEY_CARRIER_CONFIG_VERSION_STRING, ":" + System.currentTimeMillis())
-
-            // ───── 注入：使用 CarrierConfigManager.overrideConfig()（对齐 CarrierConfigWriter） ─────
-            if (!b.isEmpty) {
-                try {
-                    cm.javaClass.getMethod(
-                        "overrideConfig",
-                        Int::class.javaPrimitiveType,
-                        PersistableBundle::class.java,
-                        Boolean::class.javaPrimitiveType
-                    ).invoke(cm, effectiveSubId, b, true)
-                } catch (_: NoSuchMethodException) {
-                    cm.javaClass.getMethod(
-                        "overrideConfig",
-                        Int::class.javaPrimitiveType,
-                        PersistableBundle::class.java
-                    ).invoke(cm, effectiveSubId, b)
+                var injected = 0
+                for (xmlFile in xmlFiles) {
+                    // 首次注入前备份原始 XML，供一键还原使用
+                    val backup = File(backupDir, xmlFile.name)
+                    if (!backup.exists()) {
+                        backup.writeText(xmlFile.readText())
+                        log("backup created: ${backup.absolutePath}")
+                    }
+                    val xml = applyToggles(xmlFile.readText(), toggle)
+                    xmlFile.writeText(xml)
+                    log("injected ${xmlFile.name}")
+                    injected++
                 }
+                killPhone()
+                // 落盘本次真正注入的 key 清单，供回读精确判断
+                val injectedKeys = toggle.filterValues { it }.keys
+                File(INJECTED_FILE).writeText(injectedKeys.joinToString(","))
+                log("injected $injected xml (keys=${toggle.keys.joinToString(",")}), injected list saved")
+                println("SUCCESS:$injected")
             }
 
-            println("SUCCESS")
             System.exit(0)
         } catch (t: Throwable) {
+            val sw = java.io.StringWriter()
+            t.printStackTrace(java.io.PrintWriter(sw))
+            log("FATAL: ${t.javaClass.name}: ${t.message}\n$sw")
             println("ERROR: ${t.message ?: t.javaClass.simpleName}")
             t.printStackTrace()
             System.exit(1)
-        } finally {
-            // ───── 清理：stopDelegateShellPermissionIdentity ─────
-            if (am != null) {
-                try {
-                    am.javaClass.getDeclaredMethod("stopDelegateShellPermissionIdentity").invoke(am)
-                } catch (_: Throwable) {}
-            }
         }
+    }
+
+    private fun killPhone() {
+        try {
+            Runtime.getRuntime().exec(arrayOf("/system/bin/sh", "-c", "killall com.android.phone")).waitFor()
+        } catch (e: Exception) {}
+    }
+
+    private fun applyToggles(xml: String, toggle: Map<String, Boolean>): String {
+        var x = xml
+        fun on(key: String) = toggle[key] == true
+
+        // A 组：通话类
+        if (on("volte")) {
+            x = setBool(x, "carrier_volte_available_bool", true)
+            x = setBool(x, "editable_enhanced_4g_lte_bool", true)
+            x = setBool(x, "hide_enhanced_4g_lte_bool", false)
+            x = setBool(x, "hide_lte_plus_data_icon_bool", false)
+        }
+        if (on("vilte")) {
+            x = setBool(x, "carrier_vt_available_bool", true)
+        }
+        if (on("ut")) {
+            x = setBool(x, "carrier_supports_ss_over_ut_bool", true)
+        }
+        if (on("vowifi")) {
+            x = setBool(x, "carrier_wfc_ims_available_bool", true)
+            x = setBool(x, "carrier_wfc_supports_wifi_only_bool", true)
+            x = setBool(x, "editable_wfc_mode_bool", true)
+            x = setBool(x, "editable_wfc_roaming_mode_bool", true)
+            x = setBool(x, "show_wifi_calling_icon_in_status_bar_bool", true)
+            x = setInt(x, "wfc_spn_format_idx_int", 6)
+        }
+
+        // B 组：5G 核心
+        if (on("nr_5g")) {
+            x = setIntArray(x, "carrier_nr_availabilities_int_array", intArrayOf(1, 2))
+            x = setInt(x, "nr_sa_disable_policy_int", 0)
+            x = setBool(x, "carrier_supports_ss_ca_bool", true)
+            x = setBool(x, "carrier_supports_tdd_ca_bool", true)
+            x = setBool(x, "carrier_supports_fdd_ca_bool", true)
+            x = setBool(x, "carrier_supports_nr_dc_bool", true)
+            x = setBool(x, "perform_nr_sa_fast_camp_bool", true)
+        }
+        if (on("vonr")) {
+            x = setBool(x, "vonr_enabled", true)
+            x = setBool(x, "vonr_setting_visibility", true)
+        }
+        if (on("cross_sim")) {
+            x = setBool(x, "carrier_cross_sim_ims_available_bool", true)
+            x = setBool(x, "enable_cross_sim_calling_on_opportunistic_data_bool", true)
+        }
+
+        // C 组：显示增强
+        if (on("lte_4g")) {
+            x = setBool(x, "show_4g_for_lte_data_icon_bool", true)
+        }
+        if (on("5g_signal")) {
+            x = setIntArray(x, "5g_nr_ssrsrp_thresholds_int_array", intArrayOf(-128, -118, -108, -98))
+            x = setIntArray(x, "5g_nr_ssrsrq_thresholds_int_array", intArrayOf(-38, -28, -18, -8))
+            x = setIntArray(x, "5g_nr_sssinr_thresholds_int_array", intArrayOf(-23, -13, -3, 7))
+        }
+        if (on("5ga_icon")) {
+            x = setInt(x, "nr_advanced_threshold_bandwidth_khz_int", 100000)
+            x = setBool(x, "include_lte_for_nr_advanced_threshold_bandwidth_bool", false)
+            x = setIntArray(x, "additional_nr_advanced_bands_int_array", intArrayOf(1, 3, 8, 28, 41, 78, 79))
+            x = setString(x, "5g_icon_configuration_string", "connected_mmwave:5G_Plus,connected:5G_Plus,connected_rrc_idle:5G,not_restricted_rrc_idle:5G,not_restricted_rrc_con:5G")
+            x = setInt(x, "nr_advanced_capable_pco_id_int", 0)
+        }
+
+        x = setInt(x, "pixel_toolbox_config_version", 3)
+        return x
+    }
+
+        private fun setBool(xml: String, key: String, value: Boolean): String {
+        val re = Regex("""<boolean name="$key" value="[^"]*"\s*/>""")
+        val rep = """<boolean name="$key" value="$value" />"""
+        return if (re.containsMatchIn(xml)) re.replace(xml, rep)
+        else xml.replace("</bundle>", "  $rep\n</bundle>")
+    }
+
+    private fun setInt(xml: String, key: String, value: Int): String {
+        val re = Regex("""<int name="$key" value="[^"]*"\s*/>""")
+        val rep = """<int name="$key" value="$value" />"""
+        return if (re.containsMatchIn(xml)) re.replace(xml, rep)
+        else xml.replace("</bundle>", "  $rep\n</bundle>")
+    }
+
+    private fun setString(xml: String, key: String, value: String): String {
+        val re = Regex("""<string name="$key">.*?</string>""", RegexOption.DOT_MATCHES_ALL)
+        val rep = """<string name="$key">$value</string>"""
+        return if (re.containsMatchIn(xml)) re.replace(xml, rep)
+        else xml.replace("</bundle>", "  $rep\n</bundle>")
+    }
+
+    private fun setIntArray(xml: String, key: String, values: IntArray): String {
+        val re = Regex("""<int-array name="$key"[^>]*>.*?</int-array>""", RegexOption.DOT_MATCHES_ALL)
+        val items = values.joinToString(" ") { """<item value="$it" />""" }
+        val rep = """<int-array name="$key" num="${values.size}">$items</int-array>"""
+        return if (re.containsMatchIn(xml)) re.replace(xml, rep)
+        else xml.replace("</bundle>", "  $rep\n</bundle>")
     }
 }

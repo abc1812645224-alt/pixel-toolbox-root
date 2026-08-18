@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PixelToolbox" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Edge-to-edge immersive theme: transparent system bars, content draws behind them -->
+    <style name="Theme.PixelToolbox" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>

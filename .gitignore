@@ -21,3 +21,4 @@ reference-rtmon/
 *.apk
 *.aab
 temp/
+.gradle-cache/

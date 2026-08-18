@@ -133,7 +133,7 @@ import com.example.pixeltoolbox.ui.custom.CallRecordingSettingsActivity
 import androidx.compose.material3.MaterialTheme
 
 @Composable
-fun AboutScreen() {
+fun AboutScreen(paddingValues: PaddingValues = PaddingValues(0.dp)) {
     val context = LocalContext.current
     var tapCount by remember { mutableIntStateOf(0) }
     var lastTapTime by remember { mutableLongStateOf(0L) }
@@ -148,7 +148,8 @@ fun AboutScreen() {
         }
     }
     LazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        contentPadding = paddingValues,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // App Icon + Name + Version
@@ -222,7 +223,7 @@ fun AboutScreen() {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "Shizuku 13.1.5",
+                    "原生 Root 引擎 (APatch/KSU/Magisk)",
                     style = MaterialTheme.typography.bodySmall,
                     color = iOSSecondaryLabel
                 )
@@ -248,8 +249,7 @@ fun AboutScreen() {
                                 )
                                 val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
                                 val filename = "pixel_toolbox_log_${sdf.format(java.util.Date())}.txt"
-                                val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-                                    ?: java.io.File(context.filesDir, "logs")
+                                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
                                 if (!dir.exists()) dir.mkdirs()
                                 val file = java.io.File(dir, filename)
                                 file.writeText(logContent, Charsets.UTF_8)
@@ -282,6 +282,18 @@ fun AboutScreen() {
                         color = iOSLabel
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                    AcknowledgementItem("Jason Eric (eritpchy)", "FingerprintPay (GPL-2.0)", "github.com/eritpchy/FingerprintPay", "特别致谢 Jason Eric 大神的开源 FingerprintPay 项目 (GPL-2.0)！为 Pixel 与广大的 Android 机友带来了极致优雅、安全出色的微信/支付宝/QQ/淘宝/云闪付硬件级指纹支付支持！")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider(color = iOSSeparator, thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AcknowledgementItem("UnifiedPush 团队", "xmsf (统一推送框架 GPL-3.0)", "github.com/UnifiedPush", "向开源统一推送服务 (xmsf) 团队致以最诚挚的敬意！项目基于 GPL-3.0 协议开源，让 Android 拥有媲美 iOS 的无感后台消息推送体验，实现 0 后台电量占用与秒收通知！")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider(color = iOSSeparator, thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AcknowledgementItem("chenzyadb", "CuprumTurbo 铜引擎 (BSD-3-Clause)", "github.com/chenzyadb/CuprumTurbo-Scheduler", "特别致谢 chenzyadb 大神的开源 CuprumTurbo-Scheduler (铜引擎性能调度)！为 Android / Pixel 提供了极其出色的 CPU 调频、uclamp 与 EAS 能量调度调优算法！")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider(color = iOSSeparator, thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
                     AcknowledgementItem("ryfineZ", "carrier-ims", "github.com/ryfineZ/carrier-ims-for-pixel", "特别致谢 ryfineZ 的开源 carrier-ims 项目，为本工具提供了 Pixel 5G/VoLTE 蜂窝网络全特性优化的核心实现思路")
                     Spacer(modifier = Modifier.height(8.dp))
                     Divider(color = iOSSeparator, thickness = 0.5.dp)
@@ -315,21 +327,28 @@ fun AboutScreen() {
                     Divider(color = iOSSeparator, thickness = 0.5.dp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "开源许可说明",
+                        "开源许可说明与集成组件版本明细",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium,
                         color = iOSLabel
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        "项目开源地址：github.com/abc1812645224-alt/pixel-toolbox",
+                        "项目开源地址：github.com/abc1812645224-alt/pixel-toolbox-root",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = iOSBlue
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        "本项目已在 GitHub 上开源（GPL-3.0）。引用的开源组件大多遵循 Apache License 2.0，可自由使用、修改与分发，需保留版权声明；其中 ShizuCallRecorder 遵循 GPL-3.0，因其为直接参考的通话录音核心实现来源，本项目整体以 GPL-3.0 开源以保持兼容。完整致谢与许可说明见仓库 docs/credits.md。",
+                        "本项目整体基于 GPL-3.0 协议开源。引用的主要开源项目及其版本与许可明细如下：\n\n" +
+                        "• FingerprintPay 指纹支付驱动模块：v6.1.0（GPL-2.0）\n" +
+                        "• xmsf 统一推送服务框架：v3.0 无图标版（GPL-3.0）\n" +
+                        "• CuprumTurbo 铜引擎性能调度：v21 最新版（BSD-3-Clause）\n" +
+                        "• ShizuCallRecorder 通话录音：GPL-3.0 兼容版本\n" +
+                        "• carrier-ims Pixel 蜂窝网络 IMS 注入库：Apache-2.0\n" +
+                        "• ARSCLib (v1.2) & AndroidHiddenApiBypass (v4.3)：Apache-2.0\n\n" +
+                        "特此向以上所有开源项目作者与团队致以最诚挚的感谢！完整致谢与许可说明见仓库 docs/credits.md。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = iOSSecondaryLabel
                     )

@@ -43,6 +43,7 @@ import android.os.Process
 import android.telephony.SubscriptionManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -51,6 +52,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -203,10 +207,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         super.onCreate(savedInstanceState)
-        // 沉浸式透明状态栏与导航栏配置
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // Edge-to-edge immersive: content draws behind status bar & navigation bar
+        enableEdgeToEdge()
         // 检查是否有最新崩溃日志 (从私有目录读取)
         try {
             val privateDir = getExternalFilesDir(null)
@@ -223,7 +225,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } catch (e: Exception) {}
-        Shizuku.addRequestPermissionResultListener(permissionListener)
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         setContent {
             val windowSizeClass = calculateWindowSizeClass(this)
@@ -241,12 +242,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(batteryReceiver)
-        Shizuku.removeRequestPermissionResultListener(permissionListener)
-    }
-    private val permissionListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-        if (requestCode == 1000 && grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-              Toast.makeText(this, "Shizuku 权限授权成功", Toast.LENGTH_SHORT).show()
-        }
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -368,23 +363,13 @@ fun PixelToolboxApp(batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrent
     }
 }
     DisposableEffect(Unit) {
-        val listener = Shizuku.OnBinderReceivedListener {
-            hasShizuku = ShizukuUtils.hasShizukuPermission()
-        }
-        val pListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
-            hasShizuku = ShizukuUtils.hasShizukuPermission()
-        }
-        Shizuku.addBinderReceivedListener(listener)
-        Shizuku.addRequestPermissionResultListener(pListener)
-        onDispose {
-            Shizuku.removeBinderReceivedListener(listener)
-            Shizuku.removeRequestPermissionResultListener(pListener)
-        }
+        hasShizuku = com.example.pixeltoolbox.utils.RootUtils.hasRootPermission()
+        onDispose {}
     }
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                hasShizuku = ShizukuUtils.hasShizukuPermission()
+                hasShizuku = com.example.pixeltoolbox.utils.RootUtils.hasRootPermission()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -417,6 +402,8 @@ fun PixelToolboxApp(batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrent
         BootManagerScreen(context = context, addLog = addLog, onBack = { showBootManager = false })
     } else {
     Scaffold(
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar(
                 containerColor = iOSCardBackground,
@@ -480,21 +467,20 @@ fun PixelToolboxApp(batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrent
     ) { paddingValues ->
         Box(
             modifier = Modifier
-                .padding(paddingValues)
                 .fillMaxSize()
                 .background(bgColor)
+                .statusBarsPadding()
+                .padding(paddingValues)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 20.dp)
                     .then(
                         if (selectedTab == 1 || selectedTab == 2) Modifier.verticalScroll(rememberScrollState())
                         else Modifier
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(modifier = Modifier.height(20.dp))
                 if (selectedTab != 0) {
                     Text(
                         text = when(selectedTab) {
@@ -503,35 +489,47 @@ fun PixelToolboxApp(batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrent
                             3 -> "关于 像素工具箱"
                             else -> ""
                         },
-                        style = MaterialTheme.typography.headlineMedium, color = iOSLabel
+                        style = MaterialTheme.typography.headlineMedium, color = iOSLabel,
+                        modifier = Modifier.padding(top = 20.dp)
                     )
                     Spacer(modifier = Modifier.height(20.dp))
                 }
                 when (selectedTab) {
-                    0 -> SignalScreen(
-                        hasShizuku, { hasShizuku = it },
-                        executionLogs, 
-                        signalMetrics, networkMetrics, deviceMetrics, trafficMetrics, systemMetrics,
-                        context, coroutineScope, addLog
-                    )
-                    1 -> SystemScreen(
-                        executionLogs,
-                        batTemp, batVolt, batteryStatus, batCurrentNA,
-                        dpiInput, { dpiInput = it },
-                        context, coroutineScope, addLog,
-                        onOpenGpsTest = { showGpsTest = true },
-                        onOpenBarometerTest = { showBarometerTest = true }
-                    )
-                    2 -> ToolboxScreen(
-                        executionLogs,
-                        terminalInput, setTerminalInput,
-                        terminalOutput, setTerminalOutput,
-                        context, coroutineScope, addLog,
-                        onOpenBootManager = { showBootManager = true }
-                    )
-                    3 -> AboutScreen()
+                    0 -> Box(modifier = Modifier.fillMaxSize()) {
+                        SignalScreen(
+                            hasShizuku, { hasShizuku = it },
+                            executionLogs, 
+                            signalMetrics, networkMetrics, deviceMetrics, trafficMetrics, systemMetrics,
+                            context, coroutineScope, addLog,
+                            PaddingValues(0.dp)
+                        )
+                    }
+                    1 -> Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        SystemScreen(
+                            executionLogs,
+                            batTemp, batVolt, batteryStatus, batCurrentNA,
+                            dpiInput, { dpiInput = it },
+                            context, coroutineScope, addLog,
+                            onOpenGpsTest = { showGpsTest = true },
+                            onOpenBarometerTest = { showBarometerTest = true }
+                        )
+                    }
+                    2 -> Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        ToolboxScreen(
+                            executionLogs,
+                            terminalInput, setTerminalInput,
+                            terminalOutput, setTerminalOutput,
+                            context, coroutineScope, addLog,
+                            onOpenBootManager = { showBootManager = true }
+                        )
+                    }
+                    3 -> Box(modifier = Modifier.fillMaxSize()) {
+                        AboutScreen(PaddingValues(0.dp))
+                    }
                 }
-                Spacer(modifier = Modifier.height(32.dp))
+                if (selectedTab == 1 || selectedTab == 2) {
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
             }
         }
     }
@@ -539,29 +537,56 @@ fun PixelToolboxApp(batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrent
 }
 // ======================= REUSABLE COMPONENTS =======================
 @Composable
-fun ShizukuAuthCard(hasShizuku: Boolean, updateShizuku: (Boolean) -> Unit) {
+fun RootAuthCard(hasRoot: Boolean, updateRoot: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var engineText by remember { mutableStateOf("") }
+
+    LaunchedEffect(hasRoot) {
+        scope.launch(Dispatchers.IO) {
+            val name = com.example.pixeltoolbox.utils.RootUtils.getRootEngineName()
+            withContext(Dispatchers.Main) {
+                engineText = name
+            }
+        }
+    }
+
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-            Text("Shizuku 核心服务", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+            Text("Root 权限控制台", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (hasShizuku) "服务已连接" else "未授权",
-                    color = if (hasShizuku) iOSGreen else iOSRed,
+                    text = if (engineText.isNotEmpty()) engineText else (if (hasRoot) "Root 权限已获取" else "未检测到 Root 权限"),
+                    color = if (hasRoot) iOSGreen else iOSRed,
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.labelLarge
                 )
                 iOSButton(
                     onClick = {
-                        ShizukuUtils.requestShizukuPermission(1000)
-                        updateShizuku(ShizukuUtils.hasShizukuPermission())
+                        scope.launch(Dispatchers.IO) {
+                            val rootOk = com.example.pixeltoolbox.utils.RootUtils.requestRootPermission(context)
+                            val name = com.example.pixeltoolbox.utils.RootUtils.getRootEngineName()
+                            withContext(Dispatchers.Main) {
+                                updateRoot(rootOk)
+                                engineText = name
+                                if (rootOk) {
+                                    Toast.makeText(context, "Root 权限检测成功！", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
                     }
                 ) {
-                    Text(if (hasShizuku) "重新获取" else "获取权限", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Text(if (hasRoot) "重新检测" else "请求 Root 授权", color = Color.White, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
     }
+}
+
+@Composable
+fun ShizukuAuthCard(hasShizuku: Boolean, updateShizuku: (Boolean) -> Unit) {
+    RootAuthCard(hasRoot = hasShizuku, updateRoot = updateShizuku)
 }
 @Composable
 fun ExecutionLogCard(executionLogs: List<String>) {
@@ -654,19 +679,18 @@ fun ExecutionLogCard(executionLogs: List<String>) {
 }
 // ======================= SCREENS =======================
 private fun querySystemPowerMode(): String? {
-    if (!ShizukuUtils.hasShizukuPermission()) return null
+    if (!com.example.pixeltoolbox.utils.RootUtils.hasRootPermission()) return null
     val candidates = listOf(
         "cmd power get-mode 2>/dev/null",
         "dumpsys power 2>/dev/null | grep -oE 'mPowerMode=[0-9]+' | head -n1 | cut -d= -f2",
         "dumpsys power 2>/dev/null | grep -oE 'PowerMode=[0-9]+' | head -n1 | cut -d= -f2"
     )
     for (cmd in candidates) {
-        val out = ShizukuUtils.executeCommandOrNull(cmd)?.trim() ?: continue
+        val out = com.example.pixeltoolbox.utils.RootUtils.executeCommandOrNull(cmd)?.trim() ?: continue
         val mode = parsePowerModeNumber(out)
         if (mode != null) return mode
     }
-    // 辅助判断：系统低电耗（省电）开关开启时归为省电
-    val lowPower = ShizukuUtils.executeCommandOrNull("settings get global low_power 2>/dev/null")?.trim()
+    val lowPower = com.example.pixeltoolbox.utils.RootUtils.executeCommandOrNull("settings get global low_power 2>/dev/null")?.trim()
     if (lowPower == "1") return "saver"
     return null
 }

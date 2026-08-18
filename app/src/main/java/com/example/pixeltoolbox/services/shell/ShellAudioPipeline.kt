@@ -189,18 +189,35 @@ class ShellAudioPipeline {
             val audioSourceEnum = ScrcpyAudioSource.fromKey(audioSource)
             val audioCodecEnum  = ScrcpyAudioCodec.fromKey(audioCodec)
             val serverArgs    = ScrcpyConfig.buildServerArgs(socketName, audioSourceEnum, audioCodecEnum, audioBitRate)
-            val launchCommand = mutableListOf("app_process", "/", ScrcpyConfig.SERVER_MAIN_CLASS)
-            launchCommand.addAll(serverArgs)
 
-            val scrcpyBuilder = ProcessBuilder(launchCommand).apply {
-                // CLASSPATH tells app_process where to find the server binary file.
-                environment()["CLASSPATH"] = serverPath
-                // Merge stderr into stdout so the log-consumer coroutine only needs one stream.
-                redirectErrorStream(true)
+            val suCmd = if (File("/system/bin/su").exists()) "/system/bin/su" else "su"
+            val isRootAvailable = try {
+                val p = Runtime.getRuntime().exec(arrayOf(suCmd, "-c", "id"))
+                p.waitFor() == 0
+            } catch (t: Throwable) {
+                false
+            }
+
+            val scrcpyBuilder = if (isRootAvailable) {
+                val classpath = serverPath
+                val mainClass = ScrcpyConfig.SERVER_MAIN_CLASS
+                val argsStr = serverArgs.joinToString(" ")
+                val fullCmd = "CLASSPATH=$classpath app_process / $mainClass $argsStr"
+                AppLogger.i("Launching scrcpy-server via Root shell ($suCmd -c ...)")
+                ProcessBuilder(suCmd, "-c", fullCmd).apply {
+                    redirectErrorStream(true)
+                }
+            } else {
+                val launchCommand = mutableListOf("app_process", "/", ScrcpyConfig.SERVER_MAIN_CLASS)
+                launchCommand.addAll(serverArgs)
+                ProcessBuilder(launchCommand).apply {
+                    environment()["CLASSPATH"] = serverPath
+                    redirectErrorStream(true)
+                }
             }
             scrcpyProcess = scrcpyBuilder.start()
             isRecordingActive.set(true)
-            AppLogger.i("scrcpy-server launched successfully")
+            AppLogger.i("scrcpy-server launched successfully (isRoot=$isRootAvailable)")
 
             // 5. Start Helper coroutines
             spawnLogConsumerCoroutine(scrcpyProcess!!)

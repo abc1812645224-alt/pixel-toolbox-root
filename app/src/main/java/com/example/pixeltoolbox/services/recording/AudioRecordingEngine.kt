@@ -111,11 +111,14 @@ class AudioRecordingEngine {
     @Volatile
     var isPaused: Boolean = false
 
+    // Active shell pipeline running under Root
+    private var activeShellPipeline: com.example.pixeltoolbox.services.shell.ShellAudioPipeline? = null
+
     /**
      * Orchestrates the initialization and connection of the entire recording pipeline.
      * @throws PipelineInitializationException if any step of the initialization fails, with details for user-friendly and technical error reporting.
      */
-    fun startPipeline(context: Service, service: IShellService, metadata: EnrichedCallData) {
+    fun startPipeline(context: Context, metadata: EnrichedCallData) {
         initializationMetadata = metadata
         val preferences = AppPreferences(context)
         val folderUri = preferences.getRecordingFolderUri()
@@ -167,24 +170,26 @@ class AudioRecordingEngine {
         scrcpyAudioMuxer = ScrcpyAudioMuxer(outputPfd!!.fileDescriptor, safResult.displayName)
 
         try {
-            audioReadPipePfd = service.startRecording(
+            val pipeline = com.example.pixeltoolbox.services.shell.ShellAudioPipeline()
+            audioReadPipePfd = pipeline.startCapture(
                 audioSourceEnum.cliKey,
                 codecEnum.cliKey,
                 bitRate,
                 serverPath,
                 preferences.isDebugEnabled()
             )
+            activeShellPipeline = pipeline
         } catch (e: Exception) {
             throw PipelineInitializationException(
                 userFriendlyMessage = e.localizedMessage ?: context.getString(R.string.recording_error_start_failed),
-                technicalLogMessage = "Remote exception calling startRecording",
+                technicalLogMessage = "Exception starting Root ShellAudioPipeline",
                 cause = e
             )
         }
 
         val inputPfd = audioReadPipePfd ?: throw PipelineInitializationException(
             userFriendlyMessage = context.getString(R.string.recording_error_start_failed),
-            technicalLogMessage = "Shell service returned null pipe – cannot start recording"
+            technicalLogMessage = "Shell pipeline returned null pipe – cannot start recording"
         )
 
         currentCodecEnum = codecEnum
@@ -243,9 +248,9 @@ class AudioRecordingEngine {
      * 4. Closes the inbound pipe.
      * 5. Closes the muxer and output file descriptor to finalize the container header.
      */
-    fun release(shellService: IShellService?) {
+    fun release(shellService: IShellService? = null) {
         AppLogger.i( "Releasing session resources and recording pipeline...")
-        runCatching { shellService?.stopRecording() }
+        runCatching { activeShellPipeline?.stopCapture() }
 
         runCatching {
             runBlocking {
@@ -266,7 +271,7 @@ class AudioRecordingEngine {
      * Trigger the normal [release] flow, then followed by an attempt to delete the incomplete recording file if it was created
      * during the pipeline initialization.
      */
-    fun cancel(context: Context, shellService: IShellService?) {
+    fun cancel(context: Context, shellService: IShellService? = null) {
         release(shellService)
         try {
             currentRecordingUri?.let { uri ->

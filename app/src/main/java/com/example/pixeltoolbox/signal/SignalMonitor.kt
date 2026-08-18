@@ -41,6 +41,8 @@ class SignalMonitor(private val context: Context) {
 
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
+    private var lastDumpsysTime = 0L
+
     fun startMonitoring(): Flow<SignalDashboardState> = flow {
         while (true) {
             val hasLocationPerm = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -62,17 +64,25 @@ class SignalMonitor(private val context: Context) {
             try {
                 val cellInfoList = telephonyManager.allCellInfo ?: emptyList()
 
-                // 一次 dumpsys telephony.registry，供带宽 / SCC / QCI / SINR 全部复用（P0-根因3）
-                val dumpsysRaw = ShizukuUtils.executeCommandOrNull("dumpsys telephony.registry")
+                // 纯 Root 模式：使用持久化 Root Shell 获取 dumpsys 实测数据，
+                // 消除轮询 su 触发 Root 管理器提示的问题（PersistentRootShell 单例复用，仅首次弹授权）。
+                val dumpsysRaw = ShizukuUtils.executeCommandPersistent("dumpsys telephony.registry")
                 val dumpsysData = if (!dumpsysRaw.isNullOrBlank()) parseDumpsysSignalStrength(dumpsysRaw) else null
 
+                // NR 频宽：从 dumpsys 实测，拿不到时 parseCellInfo 内回退到频段典型值
                 val nrBandwidths = fetchNrBandwidths(dumpsysRaw)
+                // SCC 数量：从 dumpsys 统计
                 val nrSccCount = fetchNrSccCount(dumpsysRaw)
 
                 val servingCells = mutableListOf<SignalInfo>()
                 val neighborCells = mutableListOf<SignalInfo>()
 
+                // 双卡场景下 allCellInfo 会返回所有 SIM 的小区，副卡的主载波会被误判成辅载波。
+                // 这里只保留「当前默认数据卡」的小区，避免副卡 LTE B3 混进服务小区列表。
+                val defaultDataSubId = getDefaultDataSubId()
+
                 for (cellInfo in cellInfoList) {
+                    if (!isCellOfDefaultDataSubId(cellInfo, defaultDataSubId)) continue
                     val isRegistered = cellInfo.isRegistered
                     val signalInfo = parseCellInfo(cellInfo, nrBandwidths, dumpsysData)
 
@@ -85,10 +95,15 @@ class SignalMonitor(private val context: Context) {
                     }
                 }
 
-                // 从 dumpsys 中强行提取隐藏的辅载波 (SCC)
+                val currentDataNet = telephonyManager.dataNetworkType
+                val hasLiveRegisteredNr = cellInfoList.any {
+                    it is CellInfoNr && it.isRegistered && isCellOfDefaultDataSubId(it, defaultDataSubId)
+                }
+
+                // 从 dumpsys 中提取辅载波：即便当前是 4G 模式，
+                // 系统底层如果在测速时打开了 5G NSA 辅载波，也能正常提取，无需在此处清空缓存。
                 val sccList = fetchSecondaryCellsFromDumpsys(dumpsysRaw)
                 for (scc in sccList) {
-                    // 去重：如果同频段且同 PCI 的小区已存在，则不重复添加
                     if (servingCells.none { it.pci == scc.pci && it.band == scc.band }) {
                         servingCells.add(scc)
                     }
@@ -96,14 +111,15 @@ class SignalMonitor(private val context: Context) {
 
                 // 修复运营商显示：优先 SIM 卡运营商名，再网络运营商名，最后 MCC-MNC 查表
                 val carrierName = getAccurateCarrierName()
-                val baseNetMode = getNetworkModeName(telephonyManager.dataNetworkType)
-                val rawNetMode = if (baseNetMode == "4G LTE" && servingCells.any { it.type == CellType.NR }) "5G NSA" else baseNetMode
+                val baseNetMode = getNetworkModeName(currentDataNet)
+                val rawNetMode = if (baseNetMode == "4G LTE" && hasLiveRegisteredNr) "5G NSA" else baseNetMode
 
                 val serviceState = getServiceState()
 
                 // 签约速率：优先 ConnectivityManager，Shizuku dumpsys 兜底
                 val subDownlink = getContractDownlink()
                 val subUplink = getContractUplink()
+                // QCI：走 Root dumpsys 实测
                 val qci = getQciFromServiceState(dumpsysRaw)
 
                 // 1. 优先：已注册的服务小区
@@ -208,15 +224,24 @@ class SignalMonitor(private val context: Context) {
 
     private fun getCpuUsage(): Float {
         return try {
-            val res = ShizukuUtils.executeCommandOrNull("cat /proc/stat")
-            if (!res.isNullOrBlank()) {
-                val firstLine = res.lines().firstOrNull { it.startsWith("cpu ") }
-                if (firstLine != null) {
+            val procStatFile = java.io.File("/proc/stat")
+            if (procStatFile.exists() && procStatFile.canRead()) {
+                val firstLine = procStatFile.bufferedReader().use { it.readLine() }
+                if (firstLine != null && firstLine.startsWith("cpu ")) {
                     val toks = firstLine.split("\\s+".toRegex())
                     val idle = toks[4].toLong()
                     val cpu = toks[1].toLong() + toks[2].toLong() + toks[3].toLong() + toks[6].toLong() + toks[7].toLong() + toks[8].toLong()
                     val total = idle + cpu
                     if (total > 0) return ((cpu.toFloat() / total.toFloat()) * 100f).coerceIn(5f, 99f)
+                }
+            }
+            // 纯 Root 模式：使用持久化 Root Shell 读取 /proc/loadavg（Android 14+ 限制普通应用读取该文件）
+            val loadAvgStr = ShizukuUtils.executeCommandPersistent("cat /proc/loadavg")?.trim() ?: ""
+            if (loadAvgStr.isNotEmpty()) {
+                val firstVal = loadAvgStr.split("\\s+".toRegex()).firstOrNull()?.toFloatOrNull()
+                if (firstVal != null) {
+                    val numCores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+                    return ((firstVal / numCores.toFloat()) * 100f).coerceIn(3f, 95f)
                 }
             }
             -1f
@@ -611,6 +636,43 @@ class SignalMonitor(private val context: Context) {
         }
     }
 
+    /**
+     * 判断某个 cellInfo 是否属于当前默认数据卡。
+     * 双卡时 allCellInfo 返回所有 SIM 的小区，副卡主载波会被误判为辅载波，故需按数据卡过滤。
+     * CellInfo 无公开 subId 字段，改用「主卡驻留网络 PLMN」匹配 cellIdentity 的 MCC+MNC：
+     * PLMN 相同即视为主卡小区；邻区/未注册小区取不到 MCC/MNC 时不过滤，保持原行为。
+     */
+    private fun isCellOfDefaultDataSubId(cellInfo: CellInfo, defaultDataSubId: Int): Boolean {
+        if (defaultDataSubId < 0) return true
+        val mainPlmn = try {
+            telephonyManager.createForSubscriptionId(defaultDataSubId).networkOperator
+                .takeIf { it.isNotBlank() }
+                ?: telephonyManager.createForSubscriptionId(defaultDataSubId).simOperator
+        } catch (_: Exception) { "" }
+        if (mainPlmn.isNullOrBlank()) return true
+
+        val identity = cellInfo.cellIdentity ?: return true
+        val mcc: String? = when (identity) {
+            is CellIdentityNr -> identity.mccString
+            is CellIdentityLte -> identity.mccString
+            is CellIdentityWcdma -> identity.mccString
+            is CellIdentityGsm -> identity.mccString
+            is CellIdentityTdscdma -> identity.mccString
+            else -> null
+        }
+        val mnc: String? = when (identity) {
+            is CellIdentityNr -> identity.mncString
+            is CellIdentityLte -> identity.mncString
+            is CellIdentityWcdma -> identity.mncString
+            is CellIdentityGsm -> identity.mncString
+            is CellIdentityTdscdma -> identity.mncString
+            else -> null
+        }
+        // 取不到 MCC/MNC 时不过滤，避免误删主卡小区
+        if (mcc.isNullOrBlank() || mnc.isNullOrBlank()) return true
+        return (mcc + mnc) == mainPlmn
+    }
+
     /** 通过 CarrierConfigManager 读取运营商显示名（不依赖 READ_PHONE_STATE） */
     private fun getCarrierNameFromConfig(): String {
         return try {
@@ -774,7 +836,8 @@ class SignalMonitor(private val context: Context) {
             }
 
             // 数据源2：dumpsys connectivity（降级兜底，某些 Android 版本在此输出 QCI）
-            val connOutput = ShizukuUtils.executeCommandOrNull("dumpsys connectivity")
+            // 改用持久化 Shell，避免每次轮询新开 su 进程触发 Root 管理器反复授权提示
+            val connOutput = ShizukuUtils.executeCommandPersistent("dumpsys connectivity")
             if (!connOutput.isNullOrBlank()) {
                 val qciInConn = Regex("(?:qci|qosClassId)=(\\d+)", RegexOption.IGNORE_CASE).find(connOutput)
                     ?: Regex("fiveQi=(\\d+)").find(connOutput)
@@ -862,7 +925,10 @@ class SignalMonitor(private val context: Context) {
                 }
 
                 val pci = if (identity.pci != CellInfo.UNAVAILABLE) identity.pci else -1
-                val realBandwidth = if (pci >= 0) nrBandwidths[pci].orEmpty() else ""
+                // 带宽取值：精确模式优先 dumpsys 实测（按 PCI 查）；官方模式 nrBandwidths 为空，
+                // 回退到频段典型值（如 N78=100MHz），保证官方模式下频宽列不显示为空。
+                val realBandwidth = (if (pci >= 0) nrBandwidths[pci].orEmpty() else "")
+                    .ifEmpty { mapBandToTypicalBandwidth(band) }
                 val realRsrp = if (strength.ssRsrp != CellInfo.UNAVAILABLE) strength.ssRsrp else 0
                 val realRsrq = if (strength.ssRsrq != CellInfo.UNAVAILABLE) strength.ssRsrq else 0
 
@@ -1040,6 +1106,23 @@ class SignalMonitor(private val context: Context) {
         }
         val offset = (10.0 * kotlin.math.log10(12.0 * nRb)).toInt()
         return (rsrp + offset).coerceIn(-120, -20)
+    }
+
+    /**
+     * NR 频段典型带宽映射（官方模式兜底，非实测）。
+     * 官方 API（allCellInfo）不暴露 NR 带宽，精确模式关闭时用此表给频宽列一个工程典型值；
+     * 精确模式开启后，parseCellInfo 会优先使用 dumpsys 实测带宽，此表仅作兜底。
+     * 参考：3GPP 主流 NR 频段常见商用带宽配置。
+     */
+    private fun mapBandToTypicalBandwidth(band: String): String {
+        return when (band) {
+            "N78", "N79", "N77", "N41" -> "100MHz"  // 主流中频段，国内 5G 主力
+            "N1", "N3", "N7" -> "20MHz"               // 低频段 refarming
+            "N28" -> "30MHz"                          // 700M 频段
+            "N5", "N8" -> "10MHz"
+            "N257", "N258", "N260", "N261" -> "100MHz" // mmWave
+            else -> ""                                 // 未知频段不臆造，保持空
+        }
     }
 
     private fun mapNrarfcnToBand(nrarfcn: Int): String {

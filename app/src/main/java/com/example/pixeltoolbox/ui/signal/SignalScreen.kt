@@ -138,9 +138,15 @@ fun SignalScreen(
     deviceMetrics: DeviceMetrics,
     trafficMetrics: TrafficMetrics,
     systemMetrics: SystemMetrics,
-    context: Context, coroutineScope: CoroutineScope, addLog: (String) -> Unit
+    context: Context, coroutineScope: CoroutineScope, addLog: (String) -> Unit,
+    paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .verticalScroll(rememberScrollState())
+        .padding(paddingValues)
+        .padding(horizontal = 20.dp)
+    ) {
         // SIM 卡列表与选中状态
         val simSlots = remember { mutableStateListOf<SimSlotInfo>() }
         var selectedSubId by remember { mutableStateOf(-1) }

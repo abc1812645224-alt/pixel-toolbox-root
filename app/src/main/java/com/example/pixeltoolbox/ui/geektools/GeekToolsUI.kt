@@ -22,12 +22,19 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -203,6 +210,246 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // 5.6 统一推送服务 (系统托管框架)
+            var isPushRunning by remember { mutableStateOf(false) }
+            var isTencentSpoofing by remember { mutableStateOf(false) }
+            var managedPushApps by remember { mutableStateOf<List<com.example.pixeltoolbox.services.push.ManagedPushApp>>(emptyList()) }
+            var showPushDetailDialog by remember { mutableStateOf(false) }
+            var isPushProcessing by remember { mutableStateOf(false) }
+
+            LaunchedEffect(Unit) {
+                coroutineScope.launch {
+                    isPushRunning = com.example.pixeltoolbox.services.push.UnifiedPushManager.isPushServiceRunning()
+                    isTencentSpoofing = com.example.pixeltoolbox.services.push.UnifiedPushManager.isTencentSpoofEnabled()
+                    managedPushApps = com.example.pixeltoolbox.services.push.UnifiedPushManager.getManagedApps(context)
+                }
+            }
+
+            SectionTitle("统一推送服务", "无感托管国内应用推送通道，即使冻结 App 也能秒收通知栏消息")
+            
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(iOSSecondaryLabel.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
+                    .padding(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isPushRunning) "统一推送托管：运行中 🟢" else "统一推送托管：已关闭 🔴",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isPushRunning) iOSGreen else textColor
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isPushRunning) "已真实检测绑定 ${managedPushApps.size} 个应用推送通道" else "开启后可实现 0 后台全自动静默接管",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = iOSSecondaryLabel
+                        )
+                    }
+                    if (isPushRunning && managedPushApps.isNotEmpty()) {
+                        TextButton(onClick = { showPushDetailDialog = true }) {
+                            Text("查看列表", color = iOSBlue, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 微信 / QQ 厂商推送伪装行
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(iOSSecondaryLabel.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("微信 / QQ 厂商推送伪装", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = textColor)
+                        Text("激活微信/QQ 系统内嵌高优先级厂商推送通道", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel)
+                    }
+                    Switch(
+                        checked = isTencentSpoofing,
+                        onCheckedChange = { enable ->
+                            coroutineScope.launch {
+                                val res = if (enable)
+                                    com.example.pixeltoolbox.services.push.UnifiedPushManager.enableTencentSpoof(context)
+                                else
+                                    com.example.pixeltoolbox.services.push.UnifiedPushManager.disableTencentSpoof(context)
+
+                                if (res.isSuccess) {
+                                    isTencentSpoofing = enable
+                                    managedPushApps = com.example.pixeltoolbox.services.push.UnifiedPushManager.getManagedApps(context)
+                                    val msg = if (enable) "已开启 微信/QQ 厂商推送伪装" else "已关闭 微信/QQ 伪装"
+                                    addLog(msg)
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = iOSBlue
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isPushRunning) {
+                        iOSOutlineButton(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (isPushProcessing) return@iOSOutlineButton
+                                isPushProcessing = true
+                                coroutineScope.launch {
+                                    val res = com.example.pixeltoolbox.services.push.UnifiedPushManager.disablePushService(context)
+                                    isPushProcessing = false
+                                    isPushRunning = com.example.pixeltoolbox.services.push.UnifiedPushManager.isPushServiceRunning()
+                                    if (res.isSuccess) {
+                                        addLog("已关闭统一推送服务")
+                                        Toast.makeText(context, "已关闭统一推送服务", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        ) {
+                            Text(if (isPushProcessing) "正在停用..." else "关闭统一推送", color = iOSRed, fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        iOSButton(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (isPushProcessing) return@iOSButton
+                                isPushProcessing = true
+                                coroutineScope.launch {
+                                    val res = com.example.pixeltoolbox.services.push.UnifiedPushManager.enablePushService(context)
+                                    isPushProcessing = false
+                                    isPushRunning = com.example.pixeltoolbox.services.push.UnifiedPushManager.isPushServiceRunning()
+                                    managedPushApps = com.example.pixeltoolbox.services.push.UnifiedPushManager.getManagedApps(context)
+                                    if (res.isSuccess) {
+                                        addLog("已无感开启统一推送托管服务")
+                                        Toast.makeText(context, "已开启统一推送托管框架", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        ) {
+                            Text(if (isPushProcessing) "正在配置..." else "开启统一推送 (系统托管)", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            if (showPushDetailDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPushDetailDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("已接管统一推送 App", fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFE8F5E9)
+                            ) {
+                                Text(
+                                    "${managedPushApps.size} 个",
+                                    color = Color(0xFF2E7D32),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    },
+                    text = {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 350.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(managedPushApps) { app ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (app.iconBitmap != null) {
+                                            Image(
+                                                bitmap = app.iconBitmap.asImageBitmap(),
+                                                contentDescription = app.appName,
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(iOSSecondaryLabel.copy(alpha = 0.2f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("App", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(10.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                app.appName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                app.packageName,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = iOSSecondaryLabel,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = Color(0xFFE3F2FD)
+                                        ) {
+                                            Text(
+                                                "已托管 🟢",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF1976D2),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showPushDetailDialog = false }) {
+                            Text("确定", color = iOSBlue, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // 6. 去除 WiFi 感叹号
             SectionTitle("去除 WiFi 感叹号", "部署连通正常的 Captive Portal 验证节点，彻底去除 WiFi 小感叹号")
             iOSButton(
@@ -237,7 +484,7 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                             var allOk = true
 
                             // 1. 高性能电源模式（含锁定峰值刷新率，覆盖省电模式留下的 60Hz 锁）
-                            val powerResult = ShizukuUtils.executeCommand("cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled true 2>/dev/null; r=\$(settings get system peak_refresh_rate 2>/dev/null); [ \"\$r\" = \"null\" ] && r=120; [ -z \"\$r\" ] && r=120; settings put system min_refresh_rate \$r 2>/dev/null; settings put system peak_refresh_rate \$r 2>/dev/null; echo 'performance' > /data/local/tmp/pixel_cpu_mode")
+                            val powerResult = ShizukuUtils.executeCommand("cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled true 2>/dev/null; echo 50 > /dev/stune/top-app/schedtune.boost 2>/dev/null; settings delete system min_refresh_rate 2>/dev/null; settings delete system peak_refresh_rate 2>/dev/null; echo 'performance' > /data/local/tmp/pixel_cpu_mode")
                             if (powerResult.isSuccess) addLog("✅ 高性能电源模式已开启（已锁定峰值刷新率）")
                             else { addLog("⚠️ 电源模式设置失败: ${powerResult.exceptionOrNull()?.message}"); allOk = false }
 
@@ -298,7 +545,7 @@ fun GeekToolsCard(context: Context, textColor: Color, addLog: (String) -> Unit, 
                             var allOk = true
 
                             // 1. 恢复默认电源模式（set-mode 0 + 关闭固定性能锁频 + 删除刷新率锁恢复自动，不残留）
-                            val powerResult = ShizukuUtils.executeCommand("cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled false 2>/dev/null; settings delete system min_refresh_rate 2>/dev/null; settings delete system peak_refresh_rate 2>/dev/null; for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo schedutil > \$g 2>/dev/null; done; echo 'default' > /data/local/tmp/pixel_cpu_mode")
+                            val powerResult = ShizukuUtils.executeCommand("cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled false 2>/dev/null; echo 0 > /dev/stune/top-app/schedtune.boost 2>/dev/null; settings delete system min_refresh_rate 2>/dev/null; settings delete system peak_refresh_rate 2>/dev/null; echo 'default' > /data/local/tmp/pixel_cpu_mode")
                             if (powerResult.isSuccess) addLog("✅ 电源模式已恢复默认（刷新率已恢复系统默认）")
                             else { addLog("⚠️ 电源模式恢复失败: ${powerResult.exceptionOrNull()?.message}"); allOk = false }
 

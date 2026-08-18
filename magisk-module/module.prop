@@ -1,0 +1,6 @@
+id=pixeltoolbox_privapp
+name=Pixel Toolbox Priv-App
+version=v1.0.0
+versionCode=100
+author=PixelToolbox
+description=Mount Pixel Toolbox as a privileged app to grant CAPTURE_AUDIO_OUTPUT and CONTROL_INCALL_EXPERIENCE for call recording.

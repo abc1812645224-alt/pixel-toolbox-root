@@ -30,12 +30,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.provider.Settings
+import android.net.Uri
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.graphics.drawable.IconCompat
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.content.pm.PackageManager
+import android.app.ActivityManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -86,6 +88,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.core.app.ActivityCompat
 import com.example.pixeltoolbox.shizuku.ShizukuUtils
+import com.example.pixeltoolbox.system.permissions.PermissionChecks
+import com.example.pixeltoolbox.utils.RootUtils
 import com.example.pixeltoolbox.shizuku.SimSlotInfo
 import com.example.pixeltoolbox.ui.theme.GlassCard
 import com.example.pixeltoolbox.ui.theme.iOSButton
@@ -113,7 +117,6 @@ import com.example.pixeltoolbox.ui.geektools.SectionTitle
 import rikka.shizuku.Shizuku
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -130,8 +133,6 @@ import android.os.Vibrator
 import com.example.pixeltoolbox.data.AppPreferences
 import com.example.pixeltoolbox.services.recording.ManageOngoingCalls
 import com.example.pixeltoolbox.ui.custom.CallRecordingSettingsActivity
-import com.example.pixeltoolbox.ui.signal.ImsGroupSwitchRow
-import com.example.pixeltoolbox.ExecutionLogCard
 import com.example.pixeltoolbox.services.KeepAliveService
 import com.example.pixeltoolbox.ui.system.AppItem
 import com.example.pixeltoolbox.ui.system.loadInstalledApps
@@ -141,8 +142,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import android.os.VibratorManager
 import androidx.core.graphics.drawable.toBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.material3.MaterialTheme
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -157,10 +156,10 @@ fun SystemScreen(
     context: Context, coroutineScope: CoroutineScope, addLog: (String) -> Unit,
     onOpenGpsTest: () -> Unit,
     onOpenBarometerTest: () -> Unit
-) {    ExecutionLogCard(executionLogs)
+) {
+    ExecutionLogCard(executionLogs)
     val iOSOrange = androidx.compose.ui.graphics.Color(0xFFFF9500)
     var hasShizuku by remember { mutableStateOf(ShizukuUtils.hasShizukuPermission()) }
-    // removed unused updateShizuku variable
     Spacer(modifier = Modifier.height(16.dp))
     // 电池状态信息
     BatteryInfoCard(batTemp, batVolt, batteryStatus, batCurrentNA)
@@ -321,59 +320,57 @@ fun SystemScreen(
                 }
                 
                 // 读取真实CPU模式：以系统真实状态为准。
-                // 省电 = cmd power get-mode == 1（系统真实省电状态）
-                // 性能 = cmd power get-fixed-performance-mode-enabled == true/1（系统真实固定性能模式）
-                // 标记文件仅作辅助/兜底，避免 UI 与实际状态脱节
-                val realModeRes = com.example.pixeltoolbox.shizuku.ShizukuUtils.executeCommand("cmd power get-mode 2>/dev/null").getOrNull()?.trim()
                 val perfModeRes = com.example.pixeltoolbox.shizuku.ShizukuUtils.executeCommand("cmd power get-fixed-performance-mode-enabled 2>/dev/null").getOrNull()?.trim()
-                val cpuModeRes = com.example.pixeltoolbox.shizuku.ShizukuUtils.executeCommand("cat /data/local/tmp/pixel_cpu_mode").getOrNull()?.trim()
+                val cpuModeRes = com.example.pixeltoolbox.shizuku.ShizukuUtils.executeCommand("cat /data/local/tmp/pixel_cpu_mode 2>/dev/null").getOrNull()?.trim()
                 val perfRealOn = perfModeRes == "true" || perfModeRes == "1" || perfModeRes == "enabled"
                 currentCpuMode = when {
-                    realModeRes == "1" -> "saver"
                     perfRealOn -> "performance"
+                    cpuModeRes == "saver" -> "saver"
                     cpuModeRes == "performance" -> "performance"
                     else -> "default"
                 }
             }
         }
     }
-    // CPU & 系统性能调度模式
+    // CuprumTurbo 铜引擎性能调度模式
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
-            Text("CPU & 系统性能调度模式", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
-            Text("请检查CPU使用情况与功耗设置", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Text("CuprumTurbo 铜引擎性能调度", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+            Text("结合 CuprumTurbo 开源算法，三挡智能调优 CPU 调频器、uclamp 与 EAS 能量调度", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(
-                    "saver" to "省电",
-                    "default" to "默认",
-                    "performance" to "性能"
+                    "saver" to "省电挡 🍀",
+                    "default" to "默认挡 ⚖️",
+                    "performance" to "性能挡 🚀"
                 ).forEach { (mode, label) ->
                     val cmd = when (mode) {
-                        "saver" -> "cmd power set-fixed-performance-mode-enabled false 2>/dev/null; for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo powersave > \$g 2>/dev/null; done; settings put system min_refresh_rate 60 2>/dev/null; settings put system peak_refresh_rate 60 2>/dev/null; echo 'saver' > /data/local/tmp/pixel_cpu_mode"
-                        "performance" -> "cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled true 2>/dev/null; r=\$(settings get system peak_refresh_rate 2>/dev/null); [ \"\$r\" = \"null\" ] && r=120; [ -z \"\$r\" ] && r=120; settings delete system min_refresh_rate 2>/dev/null; settings put system peak_refresh_rate \$r 2>/dev/null; echo 'performance' > /data/local/tmp/pixel_cpu_mode"
-                        else -> "cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled false 2>/dev/null; settings delete system min_refresh_rate 2>/dev/null; settings delete system peak_refresh_rate 2>/dev/null; echo 'default' > /data/local/tmp/pixel_cpu_mode"
+                        "saver" -> "for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do echo powersave > \$g 2>/dev/null || echo schedutil > \$g 2>/dev/null; done; echo -15 > /dev/stune/top-app/schedtune.boost 2>/dev/null; echo 0 > /dev/uclamp/top-app/uclamp.min 2>/dev/null; echo 512 > /dev/uclamp/top-app/uclamp.max 2>/dev/null; cutoolbox mode powersave 2>/dev/null; cuprumturbo -m powersave 2>/dev/null; echo 'saver' > /data/local/tmp/pixel_cpu_mode"
+                        "performance" -> "cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled true 2>/dev/null; for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do echo performance > \$g 2>/dev/null || echo schedutil > \$g 2>/dev/null; done; for r in /sys/devices/system/cpu/cpufreq/policy*/schedutil/rate_limit_us; do echo 0 > \$r 2>/dev/null; done; echo 100 > /dev/stune/top-app/schedtune.boost 2>/dev/null; echo 1024 > /dev/uclamp/top-app/uclamp.min 2>/dev/null; echo 1024 > /dev/uclamp/top-app/uclamp.max 2>/dev/null; cutoolbox mode performance 2>/dev/null; cuprumturbo -m performance 2>/dev/null; echo 'performance' > /data/local/tmp/pixel_cpu_mode"
+                        else -> "cmd power set-mode 0 2>/dev/null; cmd power set-fixed-performance-mode-enabled false 2>/dev/null; for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do echo schedutil > \$g 2>/dev/null || echo sugov_ext > \$g 2>/dev/null; done; echo 0 > /dev/stune/top-app/schedtune.boost 2>/dev/null; echo 0 > /dev/uclamp/top-app/uclamp.min 2>/dev/null; echo 1024 > /dev/uclamp/top-app/uclamp.max 2>/dev/null; cutoolbox mode balance 2>/dev/null; cuprumturbo -m balance 2>/dev/null; echo 'default' > /data/local/tmp/pixel_cpu_mode"
                     }
                     val successMsg = when (mode) {
-                        "saver" -> "省电模式 (CPU降频 + 60Hz刷新率)"
-                        "performance" -> "性能模式 (性能锁频 + 动态高刷新率)"
-                        else -> "均衡默认模式 (恢复系统调度与刷新率)"
+                        "saver" -> "CuprumTurbo 省电挡 (限制前台 CPU 抢占 & 降频省电)"
+                        "performance" -> "CuprumTurbo 性能挡 (满血锁频 + 1024 uclamp 高能调度)"
+                        else -> "CuprumTurbo 默认挡 (EAS 动态均衡调度)"
                     }
                     val onClick = fun() {
-                        if (!ShizukuUtils.hasShizukuPermission()) {
-                            Toast.makeText(context, "请先授权 Shizuku 权限", Toast.LENGTH_LONG).show()
+                        if (!RootUtils.hasRootPermission()) {
+                            Toast.makeText(context, "请先授予 Root 权限", Toast.LENGTH_LONG).show()
                             return
                         }
                         currentCpuMode = mode
-                        coroutineScope.launch {
-                            val result = ShizukuUtils.executeCommand(cmd)
-                            result.onSuccess {
-                                addLog(successMsg)
-                                Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
-                            }.onFailure { e ->
-                                val errMsg = e.message ?: "未知错误"
-                                addLog("失败: $errMsg")
-                                Toast.makeText(context, "执行失败: $errMsg", Toast.LENGTH_LONG).show()
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val result = RootUtils.executeCommand(cmd)
+                            withContext(Dispatchers.Main) {
+                                result.onSuccess {
+                                    addLog(successMsg)
+                                    Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
+                                }.onFailure { e ->
+                                    val errMsg = e.message ?: "未知错误"
+                                    addLog("失败: $errMsg")
+                                    Toast.makeText(context, "执行失败: $errMsg", Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
@@ -440,6 +437,357 @@ fun SystemScreen(
         }
     }
     Spacer(modifier = Modifier.height(16.dp))
+    // LSPosed 桌面定制
+    var dt2sEnabled by remember { mutableStateOf(false) }
+    var hideSearchEnabled by remember { mutableStateOf(false) }
+    var hideGestureLineEnabled by remember { mutableStateOf(false) }
+    var showRebootDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
+        dt2sEnabled = prefs.getBoolean("dt2s", false)
+        hideSearchEnabled = prefs.getBoolean("hide_search_bar", false)
+        hideGestureLineEnabled = prefs.getBoolean("hide_gesture_line", false)
+    }
+
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text("LSPosed 原生桌面定制", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+            Text("仅支持 Vector / LSPosed 框架（Zygisk 刷入），适配 Android 17 Pixel", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Text("原版 Xposed / EdXposed / Dreamland 等框架不生效", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onDt2sClick = {
+                    val newValue = !dt2sEnabled
+                    dt2sEnabled = newValue
+                    persistXposedToggle(context, "dt2s", newValue)
+                    Toast.makeText(context, if (newValue) "双击锁屏已开启，桌面已自动重启" else "双击锁屏已关闭，桌面已自动重启", Toast.LENGTH_LONG).show()
+                }
+                if (dt2sEnabled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onDt2sClick) {
+                        Text("双击锁屏\n(已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onDt2sClick) {
+                        Text("双击锁屏\n(未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+
+                val onHideSearchClick = {
+                    val newValue = !hideSearchEnabled
+                    hideSearchEnabled = newValue
+                    persistXposedToggle(context, "hide_search_bar", newValue)
+                    Toast.makeText(context, if (newValue) "隐藏搜索框已开启，桌面已自动重启" else "隐藏搜索框已关闭，桌面已自动重启", Toast.LENGTH_LONG).show()
+                }
+                if (hideSearchEnabled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onHideSearchClick) {
+                        Text("去搜索框\n(已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onHideSearchClick) {
+                        Text("去搜索框\n(未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+
+                val onHideGestureLineClick = {
+                    val newValue = !hideGestureLineEnabled
+                    hideGestureLineEnabled = newValue
+                    persistXposedToggle(context, "hide_gesture_line", newValue, restart = false)
+                    showRebootDialog = true
+                }
+                if (hideGestureLineEnabled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onHideGestureLineClick) {
+                        Text("去小白条\n(已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onHideGestureLineClick) {
+                        Text("去小白条\n(未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+        }
+    }
+    if (showRebootDialog) {
+        AlertDialog(
+            onDismissRequest = { showRebootDialog = false },
+            title = { Text("需重启手机生效") },
+            text = { Text("「去小白条」开关已写入，需重启手机后才会生效。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRebootDialog = false
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        RootUtils.executeCommand("reboot")
+                    }
+                }) { Text("立即重启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRebootDialog = false }) { Text("取消") }
+            }
+        )
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // 微信 / 支付宝指纹支付 (FingerprintPay)
+    var isWeChatPayActive by remember { mutableStateOf(false) }
+    var isAlipayActive by remember { mutableStateOf(false) }
+    var showFingerprintRebootDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val wechatRes = com.example.pixeltoolbox.utils.RootUtils.executeCommand("ls /data/adb/modules/ 2>/dev/null | grep xfingerprint-pay-wechat; cat /data/system/pixeltoolbox_wechat_fp.xml 2>/dev/null")
+            val alipayRes = com.example.pixeltoolbox.utils.RootUtils.executeCommand("ls /data/adb/modules/ 2>/dev/null | grep xfingerprint-pay-alipay; cat /data/system/pixeltoolbox_alipay_fp.xml 2>/dev/null")
+            isWeChatPayActive = wechatRes.getOrDefault("").isNotEmpty()
+            isAlipayActive = alipayRes.getOrDefault("").isNotEmpty()
+        }
+    }
+
+    var driverMode by remember { mutableStateOf(RootUtils.ZygiskPayDriverMode.NOT_ACTIVE) }
+    LaunchedEffect(Unit) {
+        coroutineScope.launch(Dispatchers.IO) {
+            driverMode = RootUtils.checkFingerprintDriverState()
+        }
+    }
+
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("微信 / 支付宝指纹支付 (v6.1.0)", style = MaterialTheme.typography.titleLarge, color = iOSLabel, modifier = Modifier.weight(1f))
+                Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    color = when (driverMode) {
+                        RootUtils.ZygiskPayDriverMode.ZYGISK_ALL, RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT, RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> Color(0xFFE8F5E9)
+                        RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> Color(0xFFFFF8E1)
+                        else -> Color(0xFFFFEBEE)
+                    }
+                ) {
+                    Text(
+                        when (driverMode) {
+                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALL -> "Zygisk 全功能 🟢"
+                            RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT -> "Zygisk 硬件级 🟢"
+                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> "Zygisk 硬件级 🟢"
+                            RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> "Xposed 兜底 🟡"
+                            else -> "未激活 🔴"
+                        },
+                        color = when (driverMode) {
+                            RootUtils.ZygiskPayDriverMode.ZYGISK_ALL, RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT, RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY -> Color(0xFF2E7D32)
+                            RootUtils.ZygiskPayDriverMode.XPOSED_FALLBACK -> Color(0xFFF57F17)
+                            else -> Color(0xFFC62828)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Text("支持最新 FingerprintPay v6.1.0 驱动（包含微信/支付宝/QQ/淘宝/云闪付），兼具 Toolbox 内置 Xposed 兜底保证", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            
+            Spacer(modifier = Modifier.height(14.dp))
+            Text("步骤一：刷入底层 Zygisk 驱动（选择任意版本）", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = iOSBlue)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // 按钮 1：【推荐】多合一全功能版 Zygisk 模块部署 (应用/生效后高亮)
+            val isAllActive = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
+            val onDeployAll = {
+                coroutineScope.launch(Dispatchers.IO) {
+                    val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_all.zip")
+                    withContext(Dispatchers.Main) {
+                        if (res.isSuccess) {
+                            driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_ALL
+                            Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
+                            showFingerprintRebootDialog = true
+                        } else {
+                            Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+
+            if (isAllActive) {
+                iOSButton(modifier = Modifier.fillMaxWidth(), onClick = { onDeployAll() }) {
+                    Text("⭐ 多合一全功能版 (已部署/运行中 🟢)", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                iOSOutlineButton(modifier = Modifier.fillMaxWidth(), onClick = { onDeployAll() }) {
+                    Text("⭐ 【推荐】部署多合一全功能版 (微信/支付宝/QQ/淘宝/云闪付)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 按钮 2 与 按钮 3：微信独立版 & 支付宝独立版模块部署 (应用/生效后高亮)
+            val isWeChatActive = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT
+            val isAlipayActiveDriver = driverMode == RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onDeployWeChat = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_wechat.zip")
+                        withContext(Dispatchers.Main) {
+                            if (res.isSuccess) {
+                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_WECHAT
+                                Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
+                                showFingerprintRebootDialog = true
+                            } else {
+                                Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+
+                if (isWeChatActive) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChat() }) {
+                        Text("微信独立版 (已部署 🟢)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployWeChat() }) {
+                        Text("部署微信独立版", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+
+                val onDeployAlipay = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val res = RootUtils.installZygiskPayModuleFromAssets(context, "zygisk_pay_alipay.zip")
+                        withContext(Dispatchers.Main) {
+                            if (res.isSuccess) {
+                                driverMode = RootUtils.ZygiskPayDriverMode.ZYGISK_ALIPAY
+                                Toast.makeText(context, res.getOrNull(), Toast.LENGTH_LONG).show()
+                                showFingerprintRebootDialog = true
+                            } else {
+                                Toast.makeText(context, "安装失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+
+                if (isAlipayActiveDriver) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipay() }) {
+                        Text("支付宝独立版 (已部署 🟢)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = { onDeployAlipay() }) {
+                        Text("部署支付宝独立版", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Text("步骤二：开启应用指纹环境 (兼具 Xposed 自动兜底)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = iOSBlue)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onToggleWeChatFP = {
+                    val target = !isWeChatPayActive
+                    isWeChatPayActive = target
+                    coroutineScope.launch(Dispatchers.IO) {
+                        if (target) {
+                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_wechat_fp.xml; mkdir -p /data/adb/modules/xfingerprint-pay-wechat 2>/dev/null")
+                        } else {
+                            RootUtils.executeCommand("rm -f /data/system/pixeltoolbox_wechat_fp.xml")
+                        }
+                    }
+                    showFingerprintRebootDialog = true
+                }
+                if (isWeChatPayActive) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onToggleWeChatFP) {
+                        Text("微信指纹 (已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onToggleWeChatFP) {
+                        Text("微信指纹 (未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+
+                val onToggleAlipayFP = {
+                    val target = !isAlipayActive
+                    isAlipayActive = target
+                    coroutineScope.launch(Dispatchers.IO) {
+                        if (target) {
+                            RootUtils.executeCommand("echo 'enabled=true' > /data/system/pixeltoolbox_alipay_fp.xml; mkdir -p /data/adb/modules/xfingerprint-pay-alipay 2>/dev/null")
+                        } else {
+                            RootUtils.executeCommand("rm -f /data/system/pixeltoolbox_alipay_fp.xml")
+                        }
+                    }
+                    showFingerprintRebootDialog = true
+                }
+                if (isAlipayActive) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onToggleAlipayFP) {
+                        Text("支付宝指纹 (已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onToggleAlipayFP) {
+                        Text("支付宝指纹 (未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showFingerprintRebootDialog) {
+        AlertDialog(
+            onDismissRequest = { showFingerprintRebootDialog = false },
+            title = { Text("需重启手机以应用指纹环境", fontWeight = FontWeight.Bold) },
+            text = { Text("指纹支付环境已成功写入！请在【重启手机】后，分别进入微信 (设置->通用->开启指纹支付) 与支付宝 (设置->安全->指纹设置) 开通指纹付款。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showFingerprintRebootDialog = false
+                    coroutineScope.launch(Dispatchers.IO) {
+                        RootUtils.executeCommand("reboot")
+                    }
+                }) { Text("立即重启", color = iOSBlue, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFingerprintRebootDialog = false }) { Text("稍后手动重启") }
+            }
+        )
+    }
+
+
+    Spacer(modifier = Modifier.height(16.dp))
+    // 验证码自动填写
+    var smsCodeEnabled by remember { mutableStateOf(false) }
+    var smsCodeOverlayGranted by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
+        smsCodeEnabled = prefs.getBoolean("sms_code", false)
+        smsCodeOverlayGranted = PermissionChecks.hasOverlayPermission(context)
+    }
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text("验证码自动填写", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+            Text("收到验证码短信时自动复制到剪贴板并弹悬浮窗提示", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Text("需重启手机后生效（hook 注入系统短信进程）", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onSmsCodeClick = {
+                    val newValue = !smsCodeEnabled
+                    smsCodeEnabled = newValue
+                    persistXposedToggle(context, "sms_code", newValue, restart = false)
+                    Toast.makeText(context, if (newValue) "验证码自动填写已开启，重启手机后生效" else "验证码自动填写已关闭，重启手机后生效", Toast.LENGTH_LONG).show()
+                }
+                if (smsCodeEnabled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onSmsCodeClick) {
+                        Text("验证码填写\n(已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onSmsCodeClick) {
+                        Text("验证码填写\n(未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+                if (smsCodeOverlayGranted) {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = {}) {
+                        Text("悬浮窗\n(已授权)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        )
+                    }) {
+                        Text("授权悬浮窗", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(16.dp))
     // Pixel 震动反馈
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -455,10 +803,10 @@ fun SystemScreen(
                         }
                         if (level > 0) {
                             val vib = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-    (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
-} else {
-    context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-}
+                                (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+                            } else {
+                                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                            }
                             if (vib == null) {
                                 Toast.makeText(context, "设备无震动器", Toast.LENGTH_LONG).show()
                                 return
@@ -517,64 +865,6 @@ fun SystemScreen(
         }
     }
     Spacer(modifier = Modifier.height(16.dp))
-    // 双击桌面锁屏
-    var showLockScreenOptions by remember { mutableStateOf(false) }
-    if (showLockScreenOptions) {
-        var isInstallingLauncher by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { if (!isInstallingLauncher) showLockScreenOptions = false },
-            title = { Text(text = if (isInstallingLauncher) "正在安装" else "选择锁屏方案") },
-            text = { 
-                if (isInstallingLauncher) {
-                    Text("请稍候，正在安装并配置纯净锁屏桌面...")
-                } else {
-                    Text("方案1：创建桌面快捷方式\n方案2：一键安装纯净锁屏桌面") 
-                }
-            },
-            confirmButton = {
-                if (!isInstallingLauncher) {
-                    TextButton(onClick = {
-                        showLockScreenOptions = false
-                        createLockScreenShortcut(context)
-                    }) {
-                        Text("方案1")
-                    }
-                }
-            },
-            dismissButton = {
-                if (!isInstallingLauncher) {
-                    TextButton(onClick = { 
-                        isInstallingLauncher = true
-                        coroutineScope.launch {
-                            installDesktopLauncher(context)
-                            isInstallingLauncher = false
-                            showLockScreenOptions = false
-                        }
-                    }) {
-                        Text("方案2")
-                    }
-                }
-            }
-        )
-    }
-    GlassCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("双击桌面锁屏", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
-                Text("提供两种完美的息屏锁屏方案", style = MaterialTheme.typography.bodyMedium, color = iOSSecondaryLabel)
-            }
-            iOSButton(
-                onClick = { showLockScreenOptions = true }
-            ) {
-                Text("选择方案", color = Color.White, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-    Spacer(modifier = Modifier.height(16.dp))
     // DPI 定制
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -619,8 +909,7 @@ fun SystemScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("通话录音", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
-                    Text("Shizuku 通话录音 · 来电/去电自动录音", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
-                    Text("重装 App 后需重新授权，否则通话检测不生效", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel)
+                    Text("Root 通话录音 · 原生 HD 48kHz 双向清晰画质", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
                 }
                 IconButton(onClick = {
                     context.startActivity(Intent(context, CallRecordingSettingsActivity::class.java))
@@ -633,7 +922,7 @@ fun SystemScreen(
             var recorderEnabled by remember { mutableStateOf(prefs.isCallRecorderEnabled()) }
             var autoIncoming by remember { mutableStateOf(prefs.isAutoRecordIncomingEnabled()) }
             var autoOutgoing by remember { mutableStateOf(prefs.isAutoRecordOutgoingEnabled()) }
-            var shizukuReady by remember { mutableStateOf(ShizukuUtils.hasShizukuPermission() && ManageOngoingCalls.isGranted(context)) }
+            var rootReady by remember { mutableStateOf(ManageOngoingCalls.isGranted(context)) }
             var granting by remember { mutableStateOf(false) }
             ImsGroupSwitchRow(
                 label = "录音总开关",
@@ -642,7 +931,11 @@ fun SystemScreen(
                 onCheckedChange = { enable ->
                     recorderEnabled = enable
                     prefs.setCallRecorderEnabled(enable)
-                    if (!enable) shizukuReady = ShizukuUtils.hasShizukuPermission()
+                    if (enable && !rootReady) {
+                        coroutineScope.launch {
+                            rootReady = ManageOngoingCalls.grant(context)
+                        }
+                    }
                 }
             )
             ImsGroupSwitchRow(
@@ -665,14 +958,14 @@ fun SystemScreen(
             )
             if (recorderEnabled) {
                 Spacer(modifier = Modifier.height(10.dp))
-                if (!ShizukuUtils.hasShizukuPermission()) {
+                if (rootReady) {
                     Text(
-                        "Shizuku 未授权：请先启动 Shizuku 并在其中授予本应用权限",
-                        color = iOSOrange, style = MaterialTheme.typography.bodySmall
+                        "Root 通话录音权限已就绪（HD 48kHz 原生超清音质）",
+                        color = iOSBlue, style = MaterialTheme.typography.bodySmall
                     )
-                } else if (!shizukuReady) {
+                } else {
                     Text(
-                        "需要 Shizuku 授权「管理进行中的通话」(manage_ongoing_calls) 才能自动录音",
+                        "需要 Root 授权「管理进行中的通话」(manage_ongoing_calls) 与底层录音权限",
                         color = iOSOrange, style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -683,221 +976,186 @@ fun SystemScreen(
                             coroutineScope.launch {
                                 val ok = ManageOngoingCalls.grant(context)
                                 granting = false
-                                shizukuReady = ShizukuUtils.hasShizukuPermission() && ManageOngoingCalls.isGranted(context)
-                                Toast.makeText(context, if (ok) "已授权 manage_ongoing_calls，自动录音已就绪" else "授权失败，请确认 Shizuku 服务已启动", Toast.LENGTH_LONG).show()
+                                rootReady = ok
+                                Toast.makeText(context, if (ok) "已通过 Root 授权，自动录音已就绪" else "授权失败，请确认已授予 Root 权限", Toast.LENGTH_LONG).show()
                             }
                         }
                     ) {
-                        Text(if (granting) "授权中..." else "一键授权", style = MaterialTheme.typography.bodyMedium)
+                        Text(if (granting) "授权中..." else "一键 Root 授权", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
         }
     }
-    Spacer(modifier = Modifier.height(16.dp))
-
-    // 物理级强制保活
-    var selectedApps by remember { mutableStateOf(emptyList<AppItem>()) }
-    var isKeepAliveEnabled by remember { mutableStateOf(KeepAliveService.isRunning) }
-    var showAppPicker by remember { mutableStateOf(false) }
-    var installedApps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-    var loadingApps by remember { mutableStateOf(false) }
-    val pm = context.packageManager
-    
-    if (showAppPicker) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showAppPicker = false },
-            sheetState = sheetState,
-            containerColor = iOSCardBackground,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { showAppPicker = false }) {
-                        Text("取消", color = iOSBlue, fontSize = 17.sp)
-                    }
-                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "选择保活应用",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = iOSLabel
-                        )
-                        Text(
-                            "最多 3 个",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = iOSSecondaryLabel
-                        )
-                    }
-                    TextButton(onClick = { showAppPicker = false }) {
-                        Text("完成", color = iOSBlue, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                    }
-                }
-                
-                if (loadingApps) {
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = iOSBlue)
-                    }
-                } else {
-                    GlassCard(modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(installedApps, key = { it.packageName }) { app ->
-                                val isSelected = selectedApps.any { it.packageName == app.packageName }
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.fillMaxWidth().clickable {
-                                            if (isSelected) {
-                                                selectedApps = selectedApps.filter { it.packageName != app.packageName }
-                                            } else {
-                                                if (selectedApps.size < 3) {
-                                                    selectedApps = selectedApps + app
-                                                } else {
-                                                    Toast.makeText(context, "最多只能选择3个应用", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }.padding(vertical = 12.dp, horizontal = 16.dp)
-                                    ) {
-                                        app.icon?.let { icon ->
-                                            Image(
-                                                bitmap = icon,
-                                                contentDescription = "${app.name} icon",
-                                                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
-                                            )
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                        }
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(app.name, fontWeight = FontWeight.SemiBold, color = iOSLabel, fontSize = 16.sp)
-                                            Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                        if (isSelected) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = "Selected",
-                                                tint = iOSBlue,
-                                                modifier = Modifier.size(24.dp)
-                                            )
-                                        }
-                                    }
-                                    Divider(color = iOSSeparator, thickness = 0.5.dp, modifier = Modifier.padding(start = 68.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        }
-    }
-    
-    GlassCard(modifier = Modifier.fillMaxWidth()) {
-        Column {
-            Text("物理级强制保活 (免 Root)", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
-            Spacer(modifier = Modifier.height(6.dp))
-            Text("【高耗电警告】通过定时唤醒锁强制拉起 CPU，防止消息延迟。重启后失效。", style = MaterialTheme.typography.labelMedium, color = iOSRed)
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // 已选应用展示
-            Text("已选应用：", style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(4.dp))
-            if (selectedApps.isEmpty()) {
-                Text("未选择任何应用", color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
-            } else {
-                selectedApps.forEach { app ->
-                    val appIcon = remember(app.packageName) {
-                        runCatching {
-                            context.packageManager.getApplicationIcon(app.packageName).toBitmap().asImageBitmap()
-                        }.getOrNull()
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (appIcon != null) {
-                            Image(
-                                bitmap = appIcon,
-                                contentDescription = "${app.name} icon",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        Text("• ${app.name}", style = MaterialTheme.typography.bodyMedium, color = iOSLabel)
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            if (!isKeepAliveEnabled) {
-                iOSOutlineButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        loadingApps = true
-                        showAppPicker = true
-                        coroutineScope.launch {
-                            if (installedApps.isEmpty()) {
-                                installedApps = loadInstalledApps(pm)
-                            }
-                            loadingApps = false
-                        }
-                    }
-                ) { Text("+ 添加 / 修改应用", fontWeight = FontWeight.SemiBold) }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-            
-            if (isKeepAliveEnabled) {
-                iOSOutlineButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        val intent = Intent(context, KeepAliveService::class.java)
-                        context.stopService(intent)
-                        isKeepAliveEnabled = false
-                        KeepAliveService.isRunning = false
-                        Toast.makeText(context, "已停止强制保活", Toast.LENGTH_SHORT).show()
-                    }
-                ) { Text("停止唤醒", color = iOSRed, fontWeight = FontWeight.SemiBold) }
-            } else {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        if (selectedApps.isEmpty()) {
-                            Toast.makeText(context, "请先选择至少一个应用", Toast.LENGTH_SHORT).show()
-                            return@Surface
-                        }
-                        val intent = Intent(context, KeepAliveService::class.java).apply {
-                            putExtra("PACKAGE_NAMES", selectedApps.map { it.packageName }.toTypedArray())
-                            putExtra("INTERVAL_MINS", 3)
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            context.startForegroundService(intent)
-                        } else {
-                            context.startService(intent)
-                        }
-                        isKeepAliveEnabled = true
-                        KeepAliveService.isRunning = true
-                        Toast.makeText(context, "开启 3分钟/次 的后台唤醒", Toast.LENGTH_SHORT).show()
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = iOSRed
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("开启强制唤醒", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-        }
-    }
-    
     Spacer(modifier = Modifier.height(16.dp))
 }
 
+fun isServiceRunning(context: android.content.Context, serviceClass: Class<*>): Boolean {
+    val manager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+    for (service in manager.getRunningServices(Int.MAX_VALUE)) {
+        if (serviceClass.name == service.service.className) {
+            return true
+        }
+    }
+    return false
+}
 
+/**
+ * 写入 LSPosed 开关并用 root 同步到 /data/system/pixeltoolbox_xposed.xml，
+ * 让 system 进程（SystemUI/桌面）可跨进程文件直读。
+ */
+private fun persistXposedToggle(context: Context, key: String, value: Boolean, restart: Boolean = true) {
+    val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
+    prefs.edit().putBoolean(key, value).commit()
 
+    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        val vectorMsg = com.example.pixeltoolbox.utils.RootUtils.ensureVectorModule()
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            when {
+                vectorMsg.startsWith("未检测到 Vector") ->
+                    android.widget.Toast.makeText(
+                        context,
+                        "此功能需要先安装 Vector 框架（Magisk 模块）并重启手机才能生效",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                vectorMsg.startsWith("Vector 已就绪") ->
+                    android.widget.Toast.makeText(context, vectorMsg, android.widget.Toast.LENGTH_LONG).show()
+                else -> android.widget.Toast.makeText(context, vectorMsg, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
+    val restartTarget = if (key == "hide_gesture_line") "com.android.systemui"
+                        else "com.google.android.apps.nexuslauncher"
+    val effectiveTarget = if (key == "sms_code") null else (if (restart) restartTarget else null)
+    syncXposedConfig(context, effectiveTarget)
+}
 
+/**
+ * 把 xposed_prefs 里所有开关状态（三个桌面开关 + 验证码 + 强制小窗）统一写入
+ * /data/system/pixeltoolbox_xposed.xml（key=value 逐行），并可选强停目标进程。
+ */
+private fun syncXposedConfig(context: Context, restartTarget: String?) {
+    val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
+    val dt2s = prefs.getBoolean("dt2s", false)
+    val hideSearch = prefs.getBoolean("hide_search_bar", false)
+    val hideGesture = prefs.getBoolean("hide_gesture_line", false)
+    val smsCode = prefs.getBoolean("sms_code", false)
 
+    val lines = mutableListOf<String>()
+    lines += "dt2s=$dt2s"
+    lines += "hide_search_bar=$hideSearch"
+    lines += "hide_gesture_line=$hideGesture"
+    lines += "sms_code=$smsCode"
 
+    val echoParts = lines.mapIndexed { i, line ->
+        val op = if (i == 0) ">" else ">>"
+        "echo '$line' $op /data/system/pixeltoolbox_xposed.xml"
+    }
+    val cmd = (echoParts + listOf(
+        "chmod 644 /data/system/pixeltoolbox_xposed.xml",
+        "chcon u:object_r:system_file:s0 /data/system/pixeltoolbox_xposed.xml"
+    )).joinToString("; ")
+
+    val fullCmd = if (restartTarget != null) "$cmd; am force-stop $restartTarget" else cmd
+    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        RootUtils.executeCommand(fullCmd)
+    }
+}
+
+@Composable
+fun BatteryData(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = iOSSecondaryLabel)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(value, style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+    }
+}
+
+@Composable
+fun BatteryInfoCard(
+    batTemp: Float, batVolt: Int, batteryStatus: Int, batCurrentNA: Int
+) {
+    var localVoltage by remember { mutableStateOf(batVolt) }
+    var localCurrent by remember { mutableStateOf(batCurrentNA) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val voltResult = RootUtils.executeCommand("cat /sys/class/power_supply/battery/voltage_now")
+                voltResult.onSuccess { v ->
+                    val uv = v.trim().toIntOrNull()
+                    if (uv != null && uv > 0) localVoltage = uv
+                }
+                val curResult = RootUtils.executeCommand("cat /sys/class/power_supply/battery/current_now")
+                curResult.onSuccess { c ->
+                    val ua = c.trim().toIntOrNull()
+                    if (ua != null) localCurrent = ua
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(batVolt) {
+        if (batVolt > 0) localVoltage = batVolt * 1000
+    }
+
+    LaunchedEffect(batCurrentNA) {
+        if (batCurrentNA != 0) localCurrent = batCurrentNA / 1000
+    }
+
+    val voltageV: String = if (localVoltage > 0) {
+        String.format(java.util.Locale.US, "%.3fV", localVoltage / 1000000f)
+    } else "--"
+
+    val currentStr: String = if (localCurrent != 0) {
+        val ma = kotlin.math.abs(localCurrent / 1000f)
+        if (ma >= 1000f) String.format(java.util.Locale.US, "%.2fA", ma / 1000f) else String.format(java.util.Locale.US, "%.0fmA", ma)
+    } else "--"
+
+    val powerW: String = if (localVoltage > 0 && localCurrent != 0) {
+        val v = localVoltage / 1000000f
+        val a = kotlin.math.abs(localCurrent / 1000f) / 1000f
+        String.format(java.util.Locale.US, "%.2fW", v * a)
+    } else "--"
+
+    val tempStr = "$batTemp °C"
+    val statusStr = when (batteryStatus) {
+        BatteryManager.BATTERY_STATUS_CHARGING -> "充电中"
+        BatteryManager.BATTERY_STATUS_FULL -> "已充满"
+        BatteryManager.BATTERY_STATUS_DISCHARGING -> "放电中"
+        BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "已充满"
+        else -> "未知($batteryStatus)"
+    }
+
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text("电池实时信息", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = iOSLabel)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                BatteryData("温度", tempStr)
+                BatteryData("状态", statusStr)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                BatteryData("电压", voltageV)
+                BatteryData("电流", currentStr)
+                BatteryData("功率", powerW)
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text("每 2 秒刷新", fontSize = 10.sp, color = iOSSecondaryLabel, modifier = Modifier.align(Alignment.CenterHorizontally))
+        }
+    }
+}
+
+private fun handleResult(context: Context, result: Result<String>, successMsg: String, addLog: (String) -> Unit) {
+    result.onSuccess {
+        addLog(successMsg)
+        Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
+    }.onFailure { e ->
+        val errorMsg = "操作失败: ${e.message}"
+        addLog(errorMsg)
+        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+    }
+}

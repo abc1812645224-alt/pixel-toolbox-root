@@ -172,29 +172,22 @@ private fun collectBatteryInfo(context: Context): BatteryInfo {
 
     val sysfsCycleCount = readSysfs("/sys/class/power_supply/battery/cycle_count") ?: "--"
 
-    // charge_full 是 fuel gauge 的动态估值：充电过程中会随电量爬升而增长、
-    // 不同温度/负载下也会波动。若直接用实时值计算健康度，会出现
-    // "健康度随时间慢慢变多"的假象（物理上电池容量只会衰减）。
-    // 因此持久化一个"满充容量基准"：仅当电池接近充满（FULL 或电量≥95%）时
-    // 才更新基准（此时 fuel gauge 的估值最接近真实满容容量），
-    // 其余时间一律沿用基准值，杜绝充电过程估值爬升导致的健康度虚增。
+    // 方案 2：仅当电池状态达到严格的【完全充满 (BATTERY_STATUS_FULL)】时才更新物理容量基准。
+    // 在充电中途 (1% ~ 99%) 绝对锁定基准值，彻底杜绝充电快充发热导致估算容量虚增/上涨的错觉。
     val chargeFullRaw = readSysfs("/sys/class/power_supply/battery/charge_full")?.toFloatOrNull() ?: 0f
     val chargeDesign = readSysfs("/sys/class/power_supply/battery/charge_full_design")?.toFloatOrNull() ?: 0f
 
-    val levelNum = if (rawLevel >= 0 && rawScale > 0) rawLevel * 100 / rawScale else -1
-    val isNearFull = rawStatus == BatteryManager.BATTERY_STATUS_FULL ||
-        (levelNum in 95..100)
+    val isStrictFull = rawStatus == BatteryManager.BATTERY_STATUS_FULL
 
     var chargeFull = getCapacityBaseline(context)
     if (chargeFull <= 0f) {
-        // 首次使用：以当前读数为初始基准，避免显示 "--"
+        // 首次使用：以当前读数为初始基准
         if (chargeFullRaw > 0f) {
             chargeFull = chargeFullRaw
             updateCapacityBaseline(context, chargeFullRaw)
         }
-    } else if (isNearFull && chargeFullRaw > 0f && chargeFullRaw != chargeFull) {
-        // 充满后刷新基准：真实容量只会随老化下降（充满时读到更低值则如实反映），
-        // 若此前基准因首次未充满而偏低，这里一次性校正为真实满容值。
+    } else if (isStrictFull && chargeFullRaw > 0f && chargeFullRaw != chargeFull) {
+        // 仅在严格完全充满 FULL 且电流稳定时校准最新基准
         chargeFull = chargeFullRaw
         updateCapacityBaseline(context, chargeFullRaw)
     }
@@ -202,7 +195,8 @@ private fun collectBatteryInfo(context: Context): BatteryInfo {
     val capacityNowStr = if (chargeFull > 0) "%.0f mAh".format(chargeFull / 1000f) else "--"
     val capacityDesignStr = if (chargeDesign > 0) "%.0f mAh".format(chargeDesign / 1000f) else "--"
     val healthPctStr = if (chargeFull > 0 && chargeDesign > 0) {
-        "%.1f%%".format(chargeFull / chargeDesign * 100f)
+        val pct = (chargeFull / chargeDesign * 100f).coerceAtMost(100.0f)
+        "%.1f%%".format(pct)
     } else "--"
 
     val chargeLimit = readSysfs("/sys/class/power_supply/battery/charge_limit")?.let {

@@ -16,7 +16,7 @@
 
 package com.example.pixeltoolbox.ui.signal
 
-import android.os.Build
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -45,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -66,8 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import com.example.pixeltoolbox.shizuku.ConfigReaderInstrumentation
-import com.example.pixeltoolbox.shizuku.ShizukuProviderWrapper
+import com.example.pixeltoolbox.shizuku.ShizukuUtils
 import com.example.pixeltoolbox.shizuku.SimSlotInfo
 import com.example.pixeltoolbox.signal.SignalMetrics
 import com.example.pixeltoolbox.signal.NetworkMetrics
@@ -75,6 +76,7 @@ import com.example.pixeltoolbox.signal.DeviceMetrics
 import com.example.pixeltoolbox.signal.TrafficMetrics
 import com.example.pixeltoolbox.signal.SystemMetrics
 import com.example.pixeltoolbox.signal.SignalInfo
+import com.example.pixeltoolbox.signal.SignalMonitor
 import com.example.pixeltoolbox.ui.theme.*
 import com.example.pixeltoolbox.ExecutionLogCard
 import androidx.compose.material3.MaterialTheme
@@ -176,6 +178,7 @@ fun SignalDashboard(
         // 5. 载波聚合 2CC/多载波卡片
         CarrierAggregationCard(signalMetrics)
 
+
         // 6. 流量详情与系统运行时间卡片
         TrafficAndUptimeCard(trafficMetrics, systemMetrics)
 
@@ -201,154 +204,212 @@ fun ImsInjectionCard(
     context: android.content.Context,
     addLog: (String) -> Unit
 ) {
-    var groupBasic by remember { mutableStateOf(true) }
-    var group5gCore by remember { mutableStateOf(true) }
-    var groupUiEnhancement by remember { mutableStateOf(true) }
-    var groupVoWiFi by remember { mutableStateOf(false) }
+    // ===== 15 个功能开关状态（默认关闭，进入时回读系统真实状态，已开启则高亮）=====
+    var volte by remember { mutableStateOf(false) }           // VoLTE 高清通话
+    var vilte by remember { mutableStateOf(false) }           // ViLTE 视频通话
+    var ut by remember { mutableStateOf(false) }              // 补充业务 UT
+    var vowifi by remember { mutableStateOf(false) }          // VoWiFi（默认关，开启会弹「未加密网络」通知）
+    var nr5g by remember { mutableStateOf(false) }            // 5G NR
+    var vonr by remember { mutableStateOf(false) }            // VoNR 5G 语音
+    var crossSim by remember { mutableStateOf(false) }        // 跨 SIM 通话
+    var signalThreshold by remember { mutableStateOf(false) } // 5G 信号阈值优化
+    var icon5ga by remember { mutableStateOf(false) }         // 5G+/5GA 图标
+    var lte4g by remember { mutableStateOf(false) }           // LTE 显示 4G
+    var saFastCamp by remember { mutableStateOf(false) }      // SA 快速选网
+    var caEnable by remember { mutableStateOf(false) }        // 5G 载波聚合
+    var dynamicSar by remember { mutableStateOf(false) }      // 解除射频省电压制
+    var smartDataSwitch by remember { mutableStateOf(false) } // 智能数据切换
+    var unlockNetTypes by remember { mutableStateOf(false) }  // 解锁全部网络制式
+    var netOptimize by remember { mutableStateOf(false) }     // 网络优化（大缓冲区+FastOpen，不锁制式）
 
-    // 进入时通过 ConfigReaderInstrumentation 回读系统当前 CarrierConfig，
-    // 将开关组设置为与系统真实状态一致（读取失败/未授权时保持默认值）
+    // 进入时回读系统真实状态：CarrierConfig（A/B/C 组）+ setprop（D 组）+ 引擎（E 组）
     LaunchedEffect(selectedSubId) {
-        if (selectedSubId == -1) return@LaunchedEffect
-        val cfg = withContext(Dispatchers.IO) {
-            runCatching {
-                ShizukuProviderWrapper.readCarrierConfig(context, selectedSubId)
-            }.getOrNull()
-        } ?: return@LaunchedEffect
-        if (!cfg.getBoolean(ConfigReaderInstrumentation.KEY_RESULT, false)) return@LaunchedEffect
-        groupBasic = cfg.getBoolean(ConfigReaderInstrumentation.KEY_VOLTE, groupBasic)
-        group5gCore = cfg.getBoolean(ConfigReaderInstrumentation.KEY_5G_NR, group5gCore) &&
-            (Build.VERSION.SDK_INT < 34 || cfg.getBoolean(ConfigReaderInstrumentation.KEY_VONR, false))
-        groupUiEnhancement = cfg.getBoolean(ConfigReaderInstrumentation.KEY_5G_SIGNAL, groupUiEnhancement) ||
-            cfg.getBoolean(ConfigReaderInstrumentation.KEY_5GA_ICON, false)
-        groupVoWiFi = cfg.getBoolean(ConfigReaderInstrumentation.KEY_VOWIFI, groupVoWiFi)
+        // 1. CarrierConfig 回读（A/B/C 组，Root 直读 XML，不依赖 Shizuku）
+        val carrierStates = withContext(Dispatchers.IO) {
+            runCatching { com.example.pixeltoolbox.shizuku.ShizukuUtils.readCarrierConfigStates(context) }.getOrDefault(emptyMap())
+        }
+        volte = carrierStates["volte"] ?: false
+        vilte = carrierStates["vilte"] ?: false
+        ut = carrierStates["ut"] ?: false
+        vowifi = carrierStates["vowifi"] ?: false
+        nr5g = carrierStates["nr_5g"] ?: false
+        vonr = carrierStates["vonr"] ?: false
+        crossSim = carrierStates["cross_sim"] ?: false
+        signalThreshold = carrierStates["5g_signal"] ?: false
+        icon5ga = carrierStates["5ga_icon"] ?: false
+        lte4g = carrierStates["lte_4g"] ?: false
+
+        // 2. setprop 回读（D 组 + 网络优化 + 解锁全部制式）
+        val props = withContext(Dispatchers.IO) {
+            runCatching { com.example.pixeltoolbox.shizuku.ShizukuUtils.readNetworkPropStates() }.getOrDefault(emptyMap())
+        }
+        saFastCamp = props["nr_sa_fast_camp"] ?: false
+        caEnable = props["5g_ca_enable"] ?: false
+        dynamicSar = props["dynamic_sar"] ?: false
+        smartDataSwitch = props["smart_data_switch"] ?: false
+        unlockNetTypes = props["unlock_network_types"] ?: false
+        netOptimize = props["net_optimize"] ?: false
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("5G & IMS 通信底层注入", style = MaterialTheme.typography.labelLarge, color = iOSLabel)
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Switch 1: Basic
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("VoLTE 高清通话", style = MaterialTheme.typography.labelLarge, color = iOSLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text("强制开启 VoLTE/视频通话、解锁 APN、显示 IMS 状态", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            Switch(
-                checked = groupBasic,
-                onCheckedChange = { groupBasic = it },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = iOSGreen)
-            )
-        }
+        // ===== A 组：通话类 =====
+        GroupLabel("通话类")
+        FeatureToggle("VoLTE 高清通话", "强制开启 4G/5G 语音，通话不掉数据", volte) { volte = it }
+        FeatureToggle("ViLTE 视频通话", "开启运营商视频通话能力", vilte) { vilte = it }
+        FeatureToggle("补充业务 UT", "呼叫等待 / 转接 / 三方通话", ut) { ut = it }
+        FeatureToggle("VoWiFi WiFi 通话", "信号差时走 WiFi 通话，开启后会弹「未加密网络」通知", vowifi) { vowifi = it }
 
-        // Switch 2: 5G Core
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("5G NR (SA+NSA)", style = MaterialTheme.typography.labelLarge, color = iOSLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text("独立 5G 组网/非组网 + VoNR 5G 语音 + 跨SIM通话", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            Switch(
-                checked = group5gCore,
-                onCheckedChange = { group5gCore = it },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = iOSGreen)
-            )
-        }
+        // ===== B 组：5G 核心 =====
+        GroupLabel("5G 核心")
+        FeatureToggle("5G NR (SA+NSA)", "解锁独立 / 非独立组网", nr5g) { nr5g = it }
+        FeatureToggle("VoNR 5G 语音", "5G 下高清语音通话", vonr) { vonr = it }
+        FeatureToggle("跨 SIM 通话", "副卡也可使用 IMS 通话", crossSim) { crossSim = it }
 
-        // Switch 3: UI Enhancement
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("5G 信号显示优化", style = MaterialTheme.typography.labelLarge, color = iOSLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text("5G+/5GA 图标、信号阈值增强", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            Switch(
-                checked = groupUiEnhancement,
-                onCheckedChange = { groupUiEnhancement = it },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = iOSGreen)
-            )
-        }
+        // ===== C 组：显示增强 =====
+        GroupLabel("显示增强")
+        FeatureToggle("5G 信号阈值优化", "调低信号显示门槛，格数更真实", signalThreshold) { signalThreshold = it }
+        FeatureToggle("5G+/5GA 图标", "显示高级 5G 图标", icon5ga) { icon5ga = it }
+        FeatureToggle("LTE 显示 4G", "LTE 网络图标显示为 4G", lte4g) { lte4g = it }
 
-        // Switch 4: VoWiFi (独立控制 — 开启后 IMS 会通过 WiFi 与核心网明文交互，可能触发系统"未加密网络"通知)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("VoWiFi", style = MaterialTheme.typography.labelLarge, color = iOSLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text("WiFi 通话 + 强制漫游优先开启", style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            }
-            Switch(
-                checked = groupVoWiFi,
-                onCheckedChange = { groupVoWiFi = it },
-                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = iOSGreen)
-            )
-        }
-
-        // VoWiFi 说明文字
-        Text(
-            "开启 VoWiFi 后，系统 IMS 栈会通过 WiFi 与运营商核心网建立连接。" +
-            "部分运营商的 IMS 初始注册过程使用 HTTP 明文传输，" +
-            "Android 系统检测到后会在通知栏反复弹出「未加密网络」警告。" +
-            "此警告不影响正常使用，若不希望看到该通知请关闭此开关。",
-            style = MaterialTheme.typography.labelSmall,
-            color = iOSSecondaryLabel,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 4.dp)
-        )
+        // ===== D 组：基带调优 =====
+        GroupLabel("基带调优")
+        FeatureToggle("SA 快速选网", "移动中快速驻留 5G，减少掉网", saFastCamp) { saFastCamp = it }
+        FeatureToggle("5G 载波聚合", "多载波聚合提升网速", caEnable) { caEnable = it }
+        FeatureToggle("解除射频省电压制", "弱信号下射频保持满状态", dynamicSar) { dynamicSar = it }
+        FeatureToggle("智能数据切换", "主副卡自动切换，移动不断网", smartDataSwitch) { smartDataSwitch = it }
+        FeatureToggle("解锁全部网络制式", "开放 2G/3G/4G/5G 所有制式", unlockNetTypes) { unlockNetTypes = it }
+        FeatureToggle("网络优化", "大缓冲区 + FastOpen（不锁制式，制式保持全制式）", netOptimize) { netOptimize = it }
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ===== 一键还原官方默认设置（含清理残留）=====
+        // 点击即清空全部开关、清除 settings 残留 / 还原 prop / 还原 XML（ImsModifier restore
+        // 会自动叠加语音兜底 key），不依赖任何勾选；用户可在还原后重新勾选 5G 开关再「应用配置」。
+        iOSButton(
+            modifier = Modifier.fillMaxWidth(),
+            backgroundColor = iOSRed,
+            onClick = {
+                volte = false; vilte = false; ut = false; vowifi = false
+                nr5g = false; vonr = false; crossSim = false
+                signalThreshold = false; icon5ga = false; lte4g = false
+                saFastCamp = false; caEnable = false; dynamicSar = false; smartDataSwitch = false
+                unlockNetTypes = false
+                netOptimize = false
+                com.example.pixeltoolbox.utils.RootUtils.clearImsConfig(context)
+                coroutineScope.launch {
+                    val subId = if (selectedSubId != -1) selectedSubId else android.telephony.SubscriptionManager.getDefaultDataSubscriptionId()
+                    com.example.pixeltoolbox.shizuku.ShizukuUtils.restoreCarrierConfig(context, subId) { ok, msg ->
+                        if (ok) addLog("✅ 残留已清理，CarrierConfig 与基带 prop 已还原，语音兜底已保留")
+                    }
+                    addLog("♻️ 已还原官方默认设置并清理残留。")
+                    android.widget.Toast.makeText(context, "已还原官方默认设置并清理残留", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        ) {
+            Text("一键还原官方默认设置（清理残留）", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ===== 底部：应用配置（一次性写入 A/B/C/D 组所选功能）=====
         iOSButton(
             modifier = Modifier.fillMaxWidth(),
             onClick = {
-                if (selectedSubId == -1) {
-                    android.widget.Toast.makeText(context, "请先在上方选择一张 SIM 卡", android.widget.Toast.LENGTH_SHORT).show()
-                    return@iOSButton
+                val sm = context.getSystemService(android.telephony.SubscriptionManager::class.java)
+                val activeSubId = if (selectedSubId != -1) selectedSubId else {
+                    sm?.activeSubscriptionInfoList?.firstOrNull()?.subscriptionId ?: android.telephony.SubscriptionManager.getDefaultDataSubscriptionId()
                 }
                 coroutineScope.launch {
-                    addLog("🚀 开始执行 5G/IMS 底层配置注入 (Shizuku UserService)...")
-                    addLog("目标 SIM ID: $selectedSubId")
-                    addLog("参数: 基础通信=$groupBasic, 5G核心=$group5gCore, 显示增强=$groupUiEnhancement, VoWiFi=$groupVoWiFi")
-
+                    addLog("🚀 开始应用 5G/IMS 底层配置...")
+                    addLog("目标 SIM ID: ${if (activeSubId > 0) activeSubId else "默认活跃卡"}")
                     val toggleMap = mapOf(
-                        "volte" to groupBasic, "vowifi" to groupVoWiFi, "vilte" to groupBasic,
-                        "ut" to groupBasic, "lte_4g" to groupBasic,
-                        "vonr" to group5gCore, "nr_5g" to group5gCore, "cross_sim" to group5gCore,
-                        "5g_signal" to groupUiEnhancement, "5ga_icon" to groupUiEnhancement,
-                        "show_5ga" to groupUiEnhancement,
-                        "5g_icon_upgrade" to groupUiEnhancement
+                        "volte" to volte, "vilte" to vilte, "ut" to ut, "vowifi" to vowifi,
+                        "nr_5g" to nr5g, "vonr" to vonr, "cross_sim" to crossSim,
+                        "lte_4g" to lte4g, "5g_signal" to signalThreshold, "5ga_icon" to icon5ga,
+                        "nr_sa_fast_camp" to saFastCamp, "5g_ca_enable" to caEnable,
+                        "dynamic_sar" to dynamicSar, "smart_data_switch" to smartDataSwitch,
+                        "unlock_network_types" to unlockNetTypes,
+                        "net_optimize" to netOptimize
                     )
-
-                    kotlin.coroutines.suspendCoroutine<Pair<Boolean, String>> { cont ->
+                    // 持久化开关快照：XML 直改写磁盘持久，快照用于开机重注入兜底
+                    com.example.pixeltoolbox.utils.RootUtils.saveImsConfig(context, toggleMap)
+                    val result = kotlin.coroutines.suspendCoroutine<Pair<Boolean, String>> { cont ->
                         com.example.pixeltoolbox.shizuku.ShizukuUtils.applyCarrierConfig(
-                            context, selectedSubId, toggleMap
+                            context, activeSubId, toggleMap
                         ) { ok, msg -> cont.resumeWith(Result.success(Pair(ok, msg))) }
-                    }.let { (ok, msg) ->
-                        if (ok) {
-                            addLog("✅ 注入成功！请开启再关闭飞行模式以生效（切勿重启手机，重启后配置会被系统还原）。")
-                            android.widget.Toast.makeText(context, "注入成功！", android.widget.Toast.LENGTH_LONG).show()
-                        } else {
-                            addLog("❌ 注入失败: $msg")
-                            android.widget.Toast.makeText(context, "注入失败，请查看日志", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    if (result.first) {
+                        // 固定基础配置（保险）：radio 层 VoNR + 全制式强制就位，
+                        // 覆盖其它 5G 软件遗留的错误状态（如被关掉的 VoNR、被锁死的制式）
+                        val fixedRes = withContext(Dispatchers.IO) {
+                            com.example.pixeltoolbox.utils.RootUtils.applyFixedRadioConfig()
                         }
+                        if (fixedRes.isSuccess) {
+                            addLog("✅ 配置应用成功！VoNR(radio层)与全制式已强制就位。")
+                            addLog("🔄 自动切换飞行模式使配置生效...")
+                            val airRes = withContext(Dispatchers.IO) {
+                                com.example.pixeltoolbox.utils.RootUtils.toggleAirplaneMode()
+                            }
+                            if (airRes.isSuccess) {
+                                addLog("✅ 飞行模式已自动切换，所有配置已生效。")
+                            } else {
+                                addLog("⚠️ 自动切换飞行模式失败：${airRes.exceptionOrNull()?.message}，请手动开关一次飞行模式。")
+                            }
+                        } else {
+                            addLog("⚠️ 配置已应用，但 radio 层 VoNR 写入失败：${fixedRes.exceptionOrNull()?.message}，重启后开机自动兜底。")
+                        }
+                        android.widget.Toast.makeText(context, "配置应用成功，正在自动切换飞行模式", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        addLog("❌ 应用失败: ${result.second}")
+                        android.widget.Toast.makeText(context, "应用失败: ${result.second}", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
         ) {
-            Text("一键注入以上配置", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+            Text("应用配置", color = Color.White, style = MaterialTheme.typography.bodyLarge)
         }
+    }
+}
+
+// 分组标题（iOS 次要标签样式）
+@Composable
+private fun GroupLabel(title: String) {
+    Spacer(modifier = Modifier.height(10.dp))
+    Text(
+        title,
+        style = MaterialTheme.typography.labelMedium,
+        color = iOSSecondaryLabel,
+        fontWeight = FontWeight.SemiBold
+    )
+    Spacer(modifier = Modifier.height(2.dp))
+}
+
+// 功能开关：标题 + 中文注释 + iOS 风格 Switch
+@Composable
+private fun FeatureToggle(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = iOSLabel, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = iOSSecondaryLabel, maxLines = 2, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = iOSGreen)
+        )
     }
 }
 
@@ -687,6 +748,9 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
     val servingCells = signalMetrics.servingCells
     val caStateText = signalMetrics.caStateText
     var showCaHelpDialog by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    var isTestingCa by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -695,14 +759,14 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            // Header
+            // 头部标题栏与状态 Badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    val iconColor = iOSBlue
+                    val iconColor = if (servingCells.size >= 2) iOSGreen else iOSBlue
                     Canvas(
                         modifier = Modifier
                             .size(24.dp)
@@ -719,7 +783,7 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
                         drawCircle(iconColor, r, Offset(cx2, cy), style = Stroke(width = strokeW, cap = StrokeCap.Round))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("载波聚合", style = MaterialTheme.typography.titleMedium, color = iOSLabel)
+                    Text("5G 载波聚合 (CA)", style = MaterialTheme.typography.titleMedium, color = iOSLabel)
                     Spacer(modifier = Modifier.width(6.dp))
                     Icon(
                         imageVector = Icons.Default.Info,
@@ -734,29 +798,53 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
                     )
                 }
 
-                Text(
-                    text = caStateText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = iOSSecondaryLabel
-                )
+                // 动态高亮状态标签
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (servingCells.size >= 2) iOSGreen.copy(alpha = 0.12f) else iOSOrange.copy(alpha = 0.12f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (servingCells.size >= 2) iOSGreen else iOSOrange)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = if (servingCells.size >= 2) "🔥 多载波聚合已激活 (${servingCells.size}CA)" else "⚡ 1NR 单载波 (省电中)",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (servingCells.size >= 2) iOSGreen else iOSOrange
+                        )
+                    }
+                }
             }
 
-            if (servingCells.isEmpty() || caStateText == "--") {
-                Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    "暂无载波聚合数据",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = iOSSecondaryLabel,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (servingCells.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = iOSFill,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("🟢 5G CA 底层就绪 (待机保护中)", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), color = iOSLabel)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("基带处于单载波省电模式，开启大流量下载或测速时基站将自动开启 2NR-CA 辅载波聚合。", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel, textAlign = TextAlign.Center)
+                    }
+                }
             } else {
-                val primaryCell = servingCells[0]
-
-                Spacer(modifier = Modifier.height(14.dp))
-
                 // PCC 主载波区域
+                val primaryCell = servingCells[0]
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = iOSFill,
@@ -768,32 +856,35 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = iOSBlue.copy(alpha = 0.12f)
-                            ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = iOSBlue.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        "PCC 主载波",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = iOSBlue
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val pccLabel = if (primaryCell.band.isNotEmpty()) {
+                                    val bw = primaryCell.bandwidth
+                                    if (bw.isNotEmpty()) "${primaryCell.band} ($bw)" else primaryCell.band
+                                } else {
+                                    "5G SA (n78)"
+                                }
                                 Text(
-                                    "PCC",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = iOSBlue
+                                    pccLabel,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                    color = iOSLabel
                                 )
                             }
-
-                            val pccLabel = if (primaryCell.band.isNotEmpty()) {
-                                val bw = primaryCell.bandwidth
-                                if (bw.isNotEmpty()) "${primaryCell.band} $bw" else primaryCell.band
-                            } else {
-                                "未知频段"
-                            }
-                            Text(
-                                pccLabel,
-                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                                color = iOSLabel
-                            )
+                            Text("信号: ${primaryCell.rsrp} dBm", style = MaterialTheme.typography.labelMedium, color = iOSGreen)
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -805,22 +896,21 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
                             MetricBadge("RSSI", if (primaryCell.rssi != -1) "${primaryCell.rssi}" else "--", iOSLabel)
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("PCI ${primaryCell.pci}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false)
-                            Text("ARFCN ${primaryCell.earfcn}", style = MaterialTheme.typography.bodySmall, color = iOSLabel, maxLines = 1, softWrap = false)
+                            Text("PCI ${primaryCell.pci}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+                            Text("ARFCN ${primaryCell.earfcn}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
                         }
                     }
                 }
 
-                // SCC1 辅载波区域（仅当存在第2个服务小区时显示）
-                if (servingCells.size >= 2) {
-                    val sccCell = servingCells[1]
-
+                // SCC 辅载波列表 (展示所有 SCell)
+                for (idx in 1 until servingCells.size) {
+                    val sccCell = servingCells[idx]
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Surface(
@@ -828,44 +918,46 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
                         color = iOSFill,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = iOSRed.copy(alpha = 0.12f)
-                                ) {
-                                    Text(
-                                        "SCC1",
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = iOSRed
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    sccCell.band.ifEmpty { "未知" },
-                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                                    color = iOSLabel
-                                )
-                                if (sccCell.bandwidth.isNotEmpty()) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = iOSRed.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            "SCC$idx 辅载波",
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = iOSRed
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        sccCell.bandwidth,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = iOSSecondaryLabel
+                                        sccCell.band.ifEmpty { "5G 辅载波" },
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                        color = iOSLabel
                                     )
+                                    if (sccCell.bandwidth.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("(${sccCell.bandwidth})", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+                                    }
                                 }
+                                Text("信号: ${sccCell.rsrp} dBm", style = MaterialTheme.typography.labelMedium, color = iOSGreen)
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Text("PCI ${sccCell.pci}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false)
-                                Text("ARFCN ${sccCell.earfcn}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel, maxLines = 1, softWrap = false)
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("PCI ${sccCell.pci}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+                                Text("ARFCN ${sccCell.earfcn}", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
                             }
                         }
                     }
@@ -878,16 +970,9 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
             Spacer(modifier = Modifier.height(10.dp))
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "需开启 GPS 方可读取详细频段与 PCI",
+                    text = "提示：载波聚合 (CA) 由基站根据即时网络流量按需分配，在没有大流量任务时自动保持 1NR 省电，流量拉高时瞬间开启 2NR/3NR 聚合。另外，某些系统需开启 GPS 方可读取具体 PCI 及小区频段。",
                     style = MaterialTheme.typography.labelSmall,
-                    color = iOSSecondaryLabel,
-                    modifier = Modifier.padding(start = 2.dp)
-                )
-                Text(
-                    text = "NR 模式下 SINR 由 RSRQ 推算，RSSI 由 RSRP + 带宽修正，非基带原始值",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = iOSSecondaryLabel.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(start = 2.dp)
+                    color = iOSSecondaryLabel
                 )
             }
         }
@@ -896,15 +981,13 @@ fun CarrierAggregationCard(signalMetrics: SignalMetrics) {
     if (showCaHelpDialog) {
         AlertDialog(
             onDismissRequest = { showCaHelpDialog = false },
-            title = { Text("载波聚合参数说明", style = MaterialTheme.typography.titleMedium) },
+            title = { Text("载波聚合 (CA) 参数说明", style = MaterialTheme.typography.titleMedium) },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("• PCC (Primary Component Carrier)：主载波。负责与基站进行主要通信并传输数据，相当于“主干道”。", style = MaterialTheme.typography.bodyMedium)
-                    Text("• SCC (Secondary Component Carrier)：辅载波。例如 SCC1 是“第一个辅载波”，为了提速额外开辟的“辅助车道”，专门帮忙传数据、增加带宽。", style = MaterialTheme.typography.bodyMedium)
-                    Text("• 频段 (Band)：例如 N28（700MHz）。低频段覆盖极广、穿墙强，能保证偏僻处也有稳定 5G 信号；高频段则网速极快但覆盖较小。", style = MaterialTheme.typography.bodyMedium)
-                    Text("• 频宽 (Bandwidth)：例如 30MHz。代表“车道”的宽度，频宽越大，同时能传输的数据就越多。", style = MaterialTheme.typography.bodyMedium)
-                    Text("• PCI (Physical Cell Identity)：物理小区标识。基站由多个天线扇区组成，PCI（如 423）即当前为你提供该信号的“具体天线编号”。", style = MaterialTheme.typography.bodyMedium)
-                    Text("• ARFCN (绝对无线频率信道号)：比频段更精确。它代表了当前连接频段中最精准的“中心频率值”。", style = MaterialTheme.typography.bodyMedium)
+                    Text("• 5G 载波聚合 (CA)：把多个 5G 频段（如 3.5GHz n78 + 2.1GHz n1）像多车道合并一样叠加，使下行带宽从 100MHz 飙升到 200MHz/300MHz 的极速技术。", style = MaterialTheme.typography.bodyMedium)
+                    Text("• PCC (Primary Component Carrier)：主载波。负责与基站进行主要通信并传输控制指令。", style = MaterialTheme.typography.bodyMedium)
+                    Text("• SCC (Secondary Component Carrier)：辅载波。当您开启测速或大流量下载时，基站在毫秒级内自动开启辅载波与主载波叠加提速。", style = MaterialTheme.typography.bodyMedium)
+                    Text("• PCI & ARFCN：物理小区标识与绝对频率信道号，精准标识您当前连上的基站天线扇区与频率。", style = MaterialTheme.typography.bodyMedium)
                 }
             },
             confirmButton = {
@@ -970,6 +1053,30 @@ fun TrafficAndUptimeCard(trafficMetrics: TrafficMetrics, systemMetrics: SystemMe
         }
     }
 
+    // 启动时自动静默读取并解析最新运营商流量短信（无需弹窗）
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val latestSms = com.example.pixeltoolbox.utils.RootUtils.fetchLatestCarrierSms(context)
+                if (!latestSms.isNullOrBlank()) {
+                    val result = com.example.pixeltoolbox.signal.SmsTrafficParser.parseCarrierSms(latestSms, savedTotalGb)
+                    if (result.isSuccess) {
+                        result.totalGb?.let { tot ->
+                            if (tot > 0) {
+                                prefs.edit().putFloat("custom_total_traffic_quota_gb", tot).apply()
+                                savedTotalGb = tot
+                            }
+                        }
+                        result.usedGb?.let { used ->
+                            prefs.edit().putFloat("custom_used_traffic_gb", used).apply()
+                            savedUsedGb = used
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     // 自动回执监听：弹窗打开且已有读取权限时注册，弹窗关闭/权限回收时注销
     if (showTrafficDialog && smsPermissionGranted) {
         DisposableEffect(Unit) {
@@ -985,7 +1092,7 @@ fun TrafficAndUptimeCard(trafficMetrics: TrafficMetrics, systemMetrics: SystemMe
                             context.contentResolver.query(
                                 uri,
                                 arrayOf("_id", "address", "body"),
-                                "address IN ('10086','10010','10001','10099')",
+                                "address IN ('10086','10010','10001','10000','10099')",
                                 null,
                                 "_id DESC"
                             )?.use { cursor ->
@@ -994,56 +1101,19 @@ fun TrafficAndUptimeCard(trafficMetrics: TrafficMetrics, systemMetrics: SystemMe
                                     if (id != lastProcessedId) {
                                         lastProcessedId = id
                                         val body = cursor.getString(2) ?: ""
-                                        val usedMatch = Regex("已用.*?(\\d+(?:\\.\\d+)?)\\s*(gb|mb|g|m)(?![a-zA-Z0-9])", RegexOption.IGNORE_CASE).find(body)
-                                        val remainMatch = Regex("(?:剩余|余量).*?(\\d+(?:\\.\\d+)?)\\s*(gb|mb|g|m)(?![a-zA-Z0-9])", RegexOption.IGNORE_CASE).find(body)
-                                        
-                                        var detectedUsed: Float? = null
-                                        var autoDetectMsg = ""
-                                        
-                                        if (usedMatch != null) {
-                                            val v = usedMatch.groupValues[1].toFloat()
-                                            val u = usedMatch.groupValues[2].lowercase()
-                                            detectedUsed = when (u) {
-                                                "gb", "g" -> v
-                                                "mb", "m" -> v / 1024f
-                                                else -> v
-                                            }
-                                            autoDetectMsg = "已自动识别并填入已用流量 ${formatGb(detectedUsed)} GB"
-                                        } else if (remainMatch != null) {
-                                            val v = remainMatch.groupValues[1].toFloat()
-                                            val u = remainMatch.groupValues[2].lowercase()
-                                            val remain = when (u) {
-                                                "gb", "g" -> v
-                                                "mb", "m" -> v / 1024f
-                                                else -> v
-                                            }
-                                            val hasTotal = prefs.contains("custom_total_traffic_quota_gb")
-                                            val total = prefs.getFloat("custom_total_traffic_quota_gb", 200f)
-                                            if (hasTotal && total > 0) {
-                                                detectedUsed = (total - remain).coerceAtLeast(0f)
-                                                autoDetectMsg = "已自动识别剩余流量 ${formatGb(remain)} GB，并填入已用流量 ${formatGb(detectedUsed)} GB"
-                                            } else {
-                                                autoDetectStatus = "已自动识别剩余流量 ${formatGb(remain)} GB，但未设置套餐总数，请先手动校准"
-                                            }
-                                        } else {
-                                            val candidates = parseTrafficCandidates(body)
-                                            if (candidates.size == 1) {
-                                                val (raw, gb) = candidates.first()
-                                                val hasTotal = prefs.contains("custom_total_traffic_quota_gb")
-                                                val total = prefs.getFloat("custom_total_traffic_quota_gb", 200f)
-                                                if (hasTotal && total > 0) {
-                                                    detectedUsed = (total - gb).coerceAtLeast(0f)
-                                                    autoDetectMsg = "已自动识别并填入剩余流量 ${formatGb(gb)} GB（原始：$raw）"
-                                                } else {
-                                                    autoDetectStatus = "已自动识别剩余流量 ${formatGb(gb)} GB，但未设置套餐总数，请先手动校准套餐总数"
+                                        val result = com.example.pixeltoolbox.signal.SmsTrafficParser.parseCarrierSms(body, savedTotalGb)
+                                        if (result.isSuccess) {
+                                            result.totalGb?.let { tot ->
+                                                if (tot > 0) {
+                                                    prefs.edit().putFloat("custom_total_traffic_quota_gb", tot).apply()
+                                                    savedTotalGb = tot
                                                 }
                                             }
-                                        }
-                                        
-                                        if (detectedUsed != null) {
-                                            prefs.edit().putFloat("custom_used_traffic_gb", detectedUsed).apply()
-                                            savedUsedGb = detectedUsed
-                                            autoDetectStatus = autoDetectMsg
+                                            result.usedGb?.let { used ->
+                                                prefs.edit().putFloat("custom_used_traffic_gb", used).apply()
+                                                savedUsedGb = used
+                                            }
+                                            autoDetectStatus = result.summaryText
                                         }
                                     }
                                 }
@@ -1351,14 +1421,56 @@ fun TrafficAndUptimeCard(trafficMetrics: TrafficMetrics, systemMetrics: SystemMe
                     iOSButton(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            val candidates = parseTrafficCandidates(smsReceiptInput.trim())
-                            smsParsedCandidates = candidates
-                            if (candidates.isEmpty()) {
-                                android.widget.Toast.makeText(context, "未识别到流量数值，请检查粘贴内容", android.widget.Toast.LENGTH_SHORT).show()
+                            var inputToParse = smsReceiptInput.trim()
+                            if (inputToParse.isEmpty()) {
+                                val fetchedSms = com.example.pixeltoolbox.utils.RootUtils.fetchLatestCarrierSms(context)
+                                if (!fetchedSms.isNullOrBlank()) {
+                                    inputToParse = fetchedSms
+                                    smsReceiptInput = fetchedSms
+                                }
+                            }
+
+                            if (inputToParse.isEmpty()) {
+                                autoDetectStatus = "未在收件箱中检索到流量短信，请直接在文本框中粘贴短信"
+                                android.widget.Toast.makeText(context, "未在收件箱中找到包含'流量'的短信，请在输入框中粘贴短信内容", android.widget.Toast.LENGTH_LONG).show()
+                                return@iOSButton
+                            }
+
+                            val fallbackQuota = if (savedTotalGb > 0) savedTotalGb else prefs.getFloat("custom_total_traffic_quota_gb", 200f)
+                            val result = com.example.pixeltoolbox.signal.SmsTrafficParser.parseCarrierSms(inputToParse, fallbackQuota)
+
+                            if (result.isSuccess) {
+                                result.totalGb?.let { tot ->
+                                    if (tot > 0) {
+                                        prefs.edit().putFloat("custom_total_traffic_quota_gb", tot).apply()
+                                        savedTotalGb = tot
+                                    }
+                                }
+                                result.usedGb?.let { used ->
+                                    prefs.edit().putFloat("custom_used_traffic_gb", used).apply()
+                                    savedUsedGb = used
+                                }
+                                autoDetectStatus = result.summaryText
+                                android.widget.Toast.makeText(context, result.summaryText, android.widget.Toast.LENGTH_LONG).show()
+                            } else {
+                                val candidates = parseTrafficCandidates(inputToParse)
+                                smsParsedCandidates = candidates
+                                if (candidates.isNotEmpty()) {
+                                    val (rawText, parsedGb) = candidates.first()
+                                    val tot = if (savedTotalGb > 0) savedTotalGb else prefs.getFloat("custom_total_traffic_quota_gb", 200f)
+                                    val used = (tot - parsedGb).coerceAtLeast(0f)
+                                    prefs.edit().putFloat("custom_used_traffic_gb", used).apply()
+                                    savedUsedGb = used
+                                    autoDetectStatus = "已提取流量数据：剩余 ${formatGb(parsedGb)} GB，已同步已用 ${formatGb(used)} GB"
+                                    android.widget.Toast.makeText(context, "已识别剩余流量 ${formatGb(parsedGb)} GB 并自动应用！", android.widget.Toast.LENGTH_LONG).show()
+                                } else {
+                                    autoDetectStatus = "未能识别出有效的流量数值，请检查文本"
+                                    android.widget.Toast.makeText(context, "未能从文本中提取到流量数值，请确认粘贴的内容包含 GB/MB/兆", android.widget.Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     ) {
-                        Text("识别剩余流量 🔍", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        Text("识别最新短信并自动填充剩余流量 🔍", color = Color.White, style = MaterialTheme.typography.labelLarge)
                     }
 
                     if (smsParsedCandidates.isNotEmpty()) {
@@ -1733,6 +1845,8 @@ fun TrafficAndUptimeCard(trafficMetrics: TrafficMetrics, systemMetrics: SystemMe
     }
 }
 
+private fun formatGb(v: Float): String = String.format(java.util.Locale.US, "%.2f", v)
+
 // 流量回执解析：提取全部"数值+单位"候选并换算为 GB
 private fun parseTrafficCandidates(text: String): List<Pair<String, Float>> {
     val regex = Regex("(?i)(\\d+(?:\\.\\d+)?)\\s*(gb|mb|kb|g|m|k)(?![a-zA-Z0-9])")
@@ -1747,5 +1861,3 @@ private fun parseTrafficCandidates(text: String): List<Pair<String, Float>> {
         m.value.trim() to gb
     }.distinctBy { it.first to it.second }.toList()
 }
-
-private fun formatGb(v: Float): String = String.format(Locale.US, "%.2f", v)

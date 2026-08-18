@@ -16,7 +16,6 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.content.IntentCompat
 import androidx.documentfile.provider.DocumentFile
-import com.example.pixeltoolbox.IShellService
 import com.example.pixeltoolbox.R
 import com.example.pixeltoolbox.data.AppPreferences
 import com.example.pixeltoolbox.data.call.EnrichedCallData
@@ -73,9 +72,6 @@ class RecordingForegroundService : Service() {
 
     private lateinit var notificationHelper: RecordingNotificationHelper
 
-    /** IPC stub to the privileged ShellService running in the shell process. */
-    private var shellService: IShellService? = null
-
     /** Scope for service lifecycle operations (binding, etc.) */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -109,12 +105,7 @@ class RecordingForegroundService : Service() {
         }
 
         shizukuManager = ShizukuConnectionManager(this) {
-            AppLogger.w( "Received callback from ShizukuConnectionManager: Shizuku disconnected unexpectedly. Stopping recording service...")
-            // Handle cleanup if the service dies during recording
-            if (_serviceState.value.isRecordingActive) {
-                notificationHelper.showErrorNotification(getString(R.string.recording_error_shizuku_disconnected_unexpectedly))
-                stopRecordingSessionAndService()
-            }
+            AppLogger.d( "Shizuku disconnected, Root engine remains active.")
         }
 
         AppLogger.d( "RecordingForegroundService initialized")
@@ -173,25 +164,14 @@ class RecordingForegroundService : Service() {
 
                 _serviceState.update { RecordingServiceState.Starting(currentMeta) }
 
-                // If enabled in the user preferences, we try to start the Shizuku as we are now starting the recording.
-                tryStartShizukuServer()
-
                 serviceScope.launch {
                     try {
-                        // Wait for Shizuku server to be available
-                        ShizukuConnectionManager.waitForServer()
-                        val service = shizukuManager.getShellService()
-                        shellService = service // update local ref
-                        startNewRecordingSession(service, currentMeta)
-                    } catch (e: SecurityException) { // Shizuku permission not granted
-                        AppLogger.e( "Shizuku permission was denied / not granted", e)
-                        notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_permission_denied))
-                        stopRecordingSessionAndService()
-                    } catch (e: Exception) { // Shizuku not running or other binding connection errors
-                        // Don't catch coroutine cancellations, they are used for cleanup. This creates a false error notification when everything's fine.
+                        startNewRecordingSession(currentMeta)
+                    } catch (e: Exception) {
+                        // Don't catch coroutine cancellations, they are used for cleanup.
                         if (e is CancellationException) throw e
 
-                        AppLogger.e( "Failed to perform ShellService binding with Shizuku. Ensure it is running, else look at error related to failed binding.", e)
+                        AppLogger.e("Failed to start native recording session", e)
                         notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_not_started) + "\nLocalized: " + e.localizedMessage)
                         stopRecordingSessionAndService()
                     } finally {
@@ -210,11 +190,6 @@ class RecordingForegroundService : Service() {
             ACTION_STANDBY -> {
                 _serviceState.update { RecordingServiceState.Standby(currentMeta) }
                 serviceScope.launch {
-                    // If enabled in the user preferences, we try to start the Shizuku server as early as possible (in the standby state, RINGING/OUTGOING),
-                    // increasing the chance it's ready by the time we need it. But this means Shizuku will be running without the user starting the recording yet.
-                    if (!appPreferences.isShizukuStartOnRecordEnabled()) {
-                        tryStartShizukuServer()
-                    }
                     AppLogger.i( "Entered standby for ${currentMeta?.direction} call")
                 }
             }
@@ -284,7 +259,7 @@ class RecordingForegroundService : Service() {
      * Creates a new [AudioRecordingEngine], starts the I/O pipeline, updates the visible notification,
      * and handles fatal [PipelineInitializationException].
      */
-    private fun startNewRecordingSession(service: IShellService, metadata: EnrichedCallData) {
+    private fun startNewRecordingSession(metadata: EnrichedCallData) {
         if (_serviceState.value.isRecordingActive) {
             AppLogger.w( "startNewRecordingSession() called while already active – ignoring")
             return
@@ -295,15 +270,15 @@ class RecordingForegroundService : Service() {
 
         try {
             // 2. Try to start the pipeline
-            activeSession.startPipeline(this, service, metadata)
+            activeSession.startPipeline(this, metadata)
             // 3. Success
             _serviceState.update { RecordingServiceState.Active(activeSession, false, metadata) }
-            AppLogger.i( "Recording pipeline started successfully")
+            AppLogger.i( "Root HD Recording pipeline started successfully")
         } catch (e: PipelineInitializationException) {
             AppLogger.e( e.message ?: "", e.cause ?: e)
             notificationHelper.showErrorNotification(e.userFriendlyMessage)
             // Ensure partial resources are cleaned up
-            activeSession.cancel(this, shellService)
+            activeSession.cancel(this)
             _serviceState.update { RecordingServiceState.Standby(metadata) }
             stopRecordingSessionAndService()
         }
@@ -326,8 +301,8 @@ class RecordingForegroundService : Service() {
         }
         AppLogger.i( "Stopping active recording session, remove foreground notification and stopping service...")
 
-        // Release all resources held by the recording session, and stop the remote shell service, finalizing the recording file.
-        activeSession.release(shellService)
+        // Release all resources held by the recording session, finalizing the recording file.
+        activeSession.release()
 
         // If the user has enabled post-recording file actions, show a notification with options.
         if (appPreferences.isPostRecordingFileActionsNotificationEnabled()) {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pixel Toolbox privileged permission allowlist.
+  Mounted to /system/etc/permissions/ via Magisk (systemless).
+  Required because CAPTURE_AUDIO_OUTPUT and CONTROL_INCALL_EXPERIENCE are
+  signature|privileged permissions; the audioserver checks them natively
+  and Xposed hooks on system_server cannot intercept the check.
+-->
+<permissions>
+    <privapp-permissions package="com.example.pixeltoolbox">
+        <permission name="android.permission.CAPTURE_AUDIO_OUTPUT"/>
+        <permission name="android.permission.CONTROL_INCALL_EXPERIENCE"/>
+        <permission name="android.permission.MODIFY_PHONE_STATE"/>
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+        <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
+    </privapp-permissions>
+</permissions>

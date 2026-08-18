@@ -7,14 +7,14 @@ plugins {
 }
 android {
     namespace = "com.example.pixeltoolbox"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.pixeltoolbox"
         minSdk = 28
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.1.5"
+        versionCode = 7
+        versionName = "1.1.6"
 
         // ===== Call Recording (ported from ShizuCallRecorder) =====
         // scrcpy-server binary injected into assets (see app/src/main/assets/scrcpy-server)
@@ -130,9 +130,16 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     // AppCompat for DeleteDialogConfirmationActivity (dialog theme)
     implementation("androidx.appcompat:appcompat:1.6.1")
-    
     compileOnly(project(":stub"))
     implementation("androidx.hilt:hilt-navigation-compose:1.0.0")
+
+    // ===== Xposed module (libxposed API, runs under Vector/LSPosed framework) =====
+    // Used by the "LSPosed 桌面定制" toggles (hide search bar / double-tap-to-sleep /
+    // hide gesture line). compileOnly: the API classes are provided by the framework
+    // at runtime inside the hooked process; we must NOT bundle them into the APK.
+    // 开关读取采用文件直读（App 侧写开关时 root chmod 目录为 755，模块侧读
+    // xposed_prefs.xml），因此无需打包 XposedProvider（service AAR），只保留 api 依赖。
+    compileOnly("io.github.libxposed:api:102.0.0")
 }
 
 

@@ -15,12 +15,15 @@
  */
 package com.example.pixeltoolbox.services.recording
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.telecom.Call
 import android.telecom.InCallService
 import android.telecom.TelecomManager
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import com.example.pixeltoolbox.data.AppPreferences
 import com.example.pixeltoolbox.data.call.CallDirection
 import com.example.pixeltoolbox.data.call.EnrichedCallData
@@ -159,9 +162,16 @@ class InCallRecordingService : InCallService() {
                 }
             }
         }
-        // Shizuku + MANAGE_ONGOING_CALLS must be available; otherwise the pipeline cannot run.
+        // MANAGE_ONGOING_CALLS AppOp must be available so Telecom binds our non-UI InCallService.
         if (!ManageOngoingCalls.isGranted(this)) {
             AppLogger.e("InCallRecordingService: MANAGE_ONGOING_CALLS AppOp not granted, cannot record")
+            return false
+        }
+        // 原生 AudioRecord 引擎需要 RECORD_AUDIO 运行时权限。
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            AppLogger.e("InCallRecordingService: RECORD_AUDIO not granted, cannot record")
             return false
         }
 
