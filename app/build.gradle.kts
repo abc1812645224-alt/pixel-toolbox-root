@@ -48,6 +48,8 @@ android {
             val ksPath = System.getenv("KEYSTORE_PATH") ?: "../pixeltoolbox.keystore"
             if (File(ksPath).exists()) {
                 signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
