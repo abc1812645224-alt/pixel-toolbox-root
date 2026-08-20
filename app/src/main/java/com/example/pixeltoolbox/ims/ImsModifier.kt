@@ -228,7 +228,8 @@ object ImsModifier {
             x = setIntArray(x, "5g_nr_sssinr_thresholds_int_array", intArrayOf(-23, -13, -3, 7))
         }
         if (on("5ga_icon")) {
-            x = setInt(x, "nr_advanced_threshold_bandwidth_khz_int", 100000)
+            // 阈值对齐厂商最宽松档（电信/联通 3CC ≥130MHz），原 100MHz 为 Android 早期旧默认
+            x = setInt(x, "nr_advanced_threshold_bandwidth_khz_int", 130000)
             x = setBool(x, "include_lte_for_nr_advanced_threshold_bandwidth_bool", false)
             x = setIntArray(x, "additional_nr_advanced_bands_int_array", intArrayOf(1, 3, 8, 28, 41, 78, 79))
             x = setString(x, "5g_icon_configuration_string", "connected_mmwave:5G_Plus,connected:5G_Plus,connected_rrc_idle:5G,not_restricted_rrc_idle:5G,not_restricted_rrc_con:5G")

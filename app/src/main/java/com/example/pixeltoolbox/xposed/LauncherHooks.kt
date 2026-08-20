@@ -47,16 +47,64 @@ class LauncherHooks(
      *
      * 根因：桌面底部白色横条由 nexuslauncher 进程自绘，是悬浮在 Dock 上方的
      * StashedHandleView（布局 R.id.stashed_handle），不属于 SystemUI，故 SystemUI 侧
-     * hook 对其无效。这里在 launcher 进程内 hook TaskbarActivityContext 构造器，反射
-     * 拿到 mControllers.stashedHandleViewController.mStashedHandleView 后置 GONE，并锁死
-     * setVisibility 防止后续 reveal 动画恢复。仅隐藏视觉、不触碰 insets/布局，不沉底。
+     * hook 对其无效。
+     *
+     * 修复记录（圈定即搜冲突）：旧版把 StashedHandleView 置 GONE 并锁死 setVisibility，
+     * 会破坏 stashed handle 视图的状态链路（该 View 同时承载长按输入区域/触控状态机），
+     * 导致圈定即搜（Circle to Search）无法触发。现改为 PixelXpert 同款方案：仅在
+     * TaskbarActivityContext 构造时把 stashedHandleViewController.mStashedHandleWidth 归零，
+     * 以宽度 0 做纯视觉隐藏，View 保持 VISIBLE，触控/状态链路完整，圈定即搜可正常触发。
      */
     private fun hookHideGestureLine() {
         hookTaskbarActivityContextCtor()
-        hookStashedHandleVisibilityLock()
+        hookTaskbarActivityContextInit()
     }
 
-    /** hook TaskbarActivityContext 构造器 after：取 stashedHandleView 置 GONE，mStashedHandleWidth 归零。 */
+    /**
+     * hook TaskbarActivityContext.init after：mStashedHandleWidth 归零。
+     *
+     * 修复记录：仅 hook 构造器不生效——反编译确认 init()（L659/662）会用资源尺寸
+     * (nav_handle_width) 重置 mStashedHandleWidth，构造器 hook 在 init 之前执行、字段
+     * 当时为 0（日志 "0 -> 0"），随后被 init 恢复，小白条重新可见。init 是构造器之后
+     * 必然调用的初始化入口，此处 after 归零才能真正覆盖初始赋值，保留 View VISIBLE
+     * 与触控/状态链路，圈定即搜可正常触发。
+     */
+    private fun hookTaskbarActivityContextInit() {
+        try {
+            val cls = classLoader.loadClass("com.android.launcher3.taskbar.TaskbarActivityContext")
+            val fControllers = cls.getDeclaredField("mControllers").apply { isAccessible = true }
+            val initMethods = cls.declaredMethods.filter { it.name == "init" }
+            if (initMethods.isEmpty()) {
+                x.log(6, logTag, "TaskbarActivityContext.init not found")
+                return
+            }
+            for (m in initMethods) {
+                x.hook(m)
+                    .setPriority(XposedInterface.PRIORITY_HIGHEST)
+                    .intercept { chain ->
+                        val result = chain.proceed()
+                        try {
+                            val controllers = fControllers.get(chain.getThisObject())
+                            val shvc = controllers.javaClass
+                                .getDeclaredField("stashedHandleViewController").apply { isAccessible = true }
+                                .get(controllers)
+                            val fWidth = shvc.javaClass.getDeclaredField("mStashedHandleWidth").apply { isAccessible = true }
+                            val before = fWidth.getInt(shvc)
+                            fWidth.setInt(shvc, 0)
+                            x.log(3, logTag, "init: stashed handle width: $before -> 0")
+                        } catch (t: Throwable) {
+                            x.log(6, logTag, "hide gesture line init error: ${t.message}", t)
+                        }
+                        result
+                    }
+            }
+            x.log(3, logTag, "TaskbarActivityContext.init hooked (${initMethods.size})")
+        } catch (t: Throwable) {
+            x.log(6, logTag, "hide gesture line init hook failed: ${t.message}", t)
+        }
+    }
+
+    /** hook TaskbarActivityContext 构造器 after：mStashedHandleWidth 归零（纯视觉隐藏，不置 GONE）。 */
     private fun hookTaskbarActivityContextCtor() {
         try {
             val cls = classLoader.loadClass("com.android.launcher3.taskbar.TaskbarActivityContext")
@@ -76,19 +124,11 @@ class LauncherHooks(
                             val shvc = controllers.javaClass
                                 .getDeclaredField("stashedHandleViewController").apply { isAccessible = true }
                                 .get(controllers)
-                            val view = shvc.javaClass
-                                .getDeclaredField("mStashedHandleView").apply { isAccessible = true }
-                                .get(shvc) as? View
-                            if (view != null) {
-                                if (view.visibility != View.GONE) {
-                                    x.log(3, logTag, "hide gesture line: ${view.javaClass.name} -> GONE")
-                                    view.visibility = View.GONE
-                                }
-                                // 兜底：长按输入区域宽度归零（Pixel Xpert 同款）
-                                shvc.javaClass.getDeclaredField("mStashedHandleWidth")
-                                    .apply { isAccessible = true }
-                                    .setInt(shvc, 0)
-                            }
+                            // 仅宽度归零（PixelXpert 同款）：View 保持 VISIBLE，保留触控/状态链路，圈定即搜可用
+                            val fWidth = shvc.javaClass.getDeclaredField("mStashedHandleWidth").apply { isAccessible = true }
+                            val before = fWidth.getInt(shvc)
+                            fWidth.setInt(shvc, 0)
+                            x.log(3, logTag, "stashed handle width: $before -> 0")
                         } catch (t: Throwable) {
                             x.log(6, logTag, "hide gesture line error: ${t.message}", t)
                         }
@@ -97,33 +137,6 @@ class LauncherHooks(
             x.log(3, logTag, "TaskbarActivityContext ctor hooked (${ctors.size})")
         } catch (t: Throwable) {
             x.log(6, logTag, "hide gesture line ctor hook failed: ${t.message}", t)
-        }
-    }
-
-    /** 锁死 StashedHandleView 为 GONE：hook View.setVisibility，对该实例非 GONE 强制改 GONE。 */
-    private fun hookStashedHandleVisibilityLock() {
-        try {
-            val targetCls = classLoader.loadClass("com.android.launcher3.taskbar.StashedHandleView")
-            val viewCls = classLoader.loadClass("android.view.View")
-            val m = viewCls.getMethod("setVisibility", Int::class.javaPrimitiveType)
-            x.hook(m)
-                .setPriority(XposedInterface.PRIORITY_HIGHEST)
-                .intercept { chain ->
-                    var forced = false
-                    try {
-                        val thisView = chain.getThisObject()
-                        val vis = chain.getArg(0) as? Int ?: View.VISIBLE
-                        if (thisView != null && targetCls.isInstance(thisView) && vis != View.GONE) {
-                            forced = true
-                        }
-                    } catch (t: Throwable) {
-                        x.log(6, logTag, "stashed handle setVisibility lock error: ${t.message}", t)
-                    }
-                    if (forced) chain.proceed(arrayOf<Any?>(View.GONE)) else chain.proceed()
-                }
-            x.log(3, logTag, "View.setVisibility hooked (lock StashedHandleView GONE)")
-        } catch (t: Throwable) {
-            x.log(6, logTag, "stashed handle setVisibility lock hook failed: ${t.message}", t)
         }
     }
 

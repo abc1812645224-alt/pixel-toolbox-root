@@ -224,10 +224,12 @@ fun ImsInjectionCard(
 
     // 进入时回读系统真实状态：CarrierConfig（A/B/C 组）+ setprop（D 组）+ 引擎（E 组）
     LaunchedEffect(selectedSubId) {
+        addLog("🔄 正在回读系统真实状态 (SIM ID: ${selectedSubId.takeIf { it != -1 } ?: "默认活跃卡"})...")
         // 1. CarrierConfig 回读（A/B/C 组，Root 直读 XML，不依赖 Shizuku）
         val carrierStates = withContext(Dispatchers.IO) {
             runCatching { com.example.pixeltoolbox.shizuku.ShizukuUtils.readCarrierConfigStates(context) }.getOrDefault(emptyMap())
         }
+        addLog("✅ CarrierConfig 回读完成 (${carrierStates.size} 项)")
         volte = carrierStates["volte"] ?: false
         vilte = carrierStates["vilte"] ?: false
         ut = carrierStates["ut"] ?: false
@@ -243,6 +245,7 @@ fun ImsInjectionCard(
         val props = withContext(Dispatchers.IO) {
             runCatching { com.example.pixeltoolbox.shizuku.ShizukuUtils.readNetworkPropStates() }.getOrDefault(emptyMap())
         }
+        addLog("✅ 基带 prop 回读完成 (${props.size} 项)，开关状态已同步")
         saFastCamp = props["nr_sa_fast_camp"] ?: false
         caEnable = props["5g_ca_enable"] ?: false
         dynamicSar = props["dynamic_sar"] ?: false

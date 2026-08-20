@@ -6,7 +6,9 @@
 
 package com.example.pixeltoolbox.ui.system
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.widget.Toast
@@ -49,6 +51,7 @@ import kotlinx.coroutines.withContext
  * 强制过滤保护最核心的系统应用，防止误停导致掉网、锁屏崩溃或开机黑屏。
  */
 private val CORE_SYSTEM_WHITELIST = setOf(
+    // ==== 核心系统进程（禁用一个即可能引发 SystemUI/SystemServer 崩溃或开机黑屏）====
     "android",
     "com.android.systemui",
     "com.google.android.apps.nexuslauncher",
@@ -59,10 +62,91 @@ private val CORE_SYSTEM_WHITELIST = setOf(
     "com.google.android.gms",
     "com.google.android.gsf",
     "com.android.bluetooth",
-    "com.android.deskclock",
-    "com.google.android.deskclock",
     "com.example.pixeltoolbox",
-    "moe.shizuku.privileged.api"
+    "moe.shizuku.privileged.api",
+
+    // ==== 系统 ContentProvider 宿主（system_server 启动即绑定，禁用必崩/bootloop）====
+    "com.android.providers.contacts",
+    "com.android.providers.calendar",
+    "com.android.providers.blockednumber",
+    "com.android.providers.contactkeys",
+    "com.android.providers.downloads",
+    "com.android.providers.downloads.ui",
+    "com.android.providers.partnerbookmarks",
+    "com.android.providers.settings",
+    "com.android.providers.telephony",
+    "com.android.providers.userdictionary",
+    "com.google.android.providers.media.module",
+
+    // ==== 系统框架与核心服务 ====
+    "com.android.location.fused",          // 定位服务
+    "com.android.mms.service",             // 彩信服务
+    "com.android.nfc",
+    "com.google.android.nfc",
+    "com.android.se",                      // Secure Element
+    "com.android.carrierdefaultapp",       // 运营商默认应用
+    "com.android.certinstaller",           // 证书安装
+    "com.android.emergency",               // 紧急信息
+    "com.android.externalstorage",         // 外部存储 Provider
+    "com.android.keychain",                // 系统密钥链
+    "com.android.managedprovisioning",     // 设备管理配置
+    "com.android.printspooler",            // 打印服务
+    "com.android.proxyhandler",            // 代理处理
+    "com.android.sharedstoragebackup",     // 存储备份
+    "com.android.simappdialog",            // SIM 应用对话框
+    "com.android.stk",                     // SIM 工具包
+    "com.android.vpndialogs",              // VPN 对话框
+    "com.android.intentresolver",          // 意图解析器（系统 UI）
+    "com.android.contactspicker",          // 联系人选择器
+    "com.android.cellbroadcastreceiver",   // 小区广播/紧急警报
+    "com.android.ons",                     // 运营商名称显示
+    "com.android.qns",
+    "com.android.telephony.imsmedia",      // IMS 媒体（VoLTE/VoNR 依赖）
+
+    // ==== Google 核心组件 ====
+    "com.google.android.contacts",         // 联系人
+    "com.google.android.permissioncontroller", // 权限控制（禁用会导致系统异常）
+    "com.google.android.packageinstaller", // 包安装器
+    "com.google.android.setupwizard",      // 设置向导
+    "com.google.android.inputmethod.latin",// Gboard 键盘
+    "com.google.android.tts",              // 语音合成
+    "com.google.android.documentsui",      // 文件选择器
+    "com.google.android.ext.services",     // 系统扩展服务
+    "com.google.android.ext.shared",
+    "com.google.android.networkstack",     // 网络栈
+    "com.google.android.networkstack.tethering",
+    "com.google.android.telephony",        // 电话框架
+    "com.google.android.euicc",            // eSIM
+    "com.google.android.configupdater",
+    "com.google.android.modulemetadata",
+    "com.google.android.pixelsystemservice", // Pixel 系统服务
+    "com.google.android.cellbroadcastreceiver",
+    "com.google.android.cellbroadcastservice",
+    "com.google.android.webview"           // WebView（禁用会导致大量应用崩溃）
+)
+
+/**
+ * 一般系统应用：可显示但禁止一键禁用（含单条开关拦截）。
+ * 禁用其自启广播可能影响系统体验（媒体库/智能服务/同步等），保留人工开关兜底。
+ * 核心白名单之外的系统应用视为"不重要系统应用"，允许一键禁用。
+ */
+private val GENERAL_SYSTEM_WHITELIST = setOf(
+    "com.android.mtp",                           // MTP 文件传输服务
+    "com.google.android.mediaprovider",          // 媒体提供者（相册/媒体库依赖）
+    "com.google.android.apps.wallpaper",         // 动态壁纸/锁屏壁纸服务
+    "com.google.android.apps.subscriptions.red", // Play 订阅服务
+    "com.google.android.syncadapters.contacts",  // 联系人同步
+    "com.google.android.syncadapters.calendar",  // 日历同步
+    "com.google.android.gms.location.history",   // 位置历史服务
+    "com.google.android.as",                     // Android System Intelligence（智能功能依赖）
+    "com.google.android.apps.restore",           // 云备份/恢复服务
+    "com.google.android.pixel.setupwizard",      // Pixel 设置向导组件
+    "com.google.android.dialer",                 // 电话（受保护：禁自启仅影响开机广播，可单条手动禁）
+    "com.google.android.apps.messaging",         // 短信
+    "com.google.android.GoogleCamera",           // 相机
+    "com.google.android.googlequicksearchbox",   // 搜索助手
+    "com.google.android.deskclock",              // 时钟/闹钟
+    "com.google.android.apps.photos"             // 相册（Google Photos 自动同步依赖）
 )
 
 data class BootReceiverItem(
@@ -71,6 +155,7 @@ data class BootReceiverItem(
     val fullComponent: String,
     val componentShort: String,
     val isSystem: Boolean,
+    val isGeneralSystem: Boolean = false,
     var isDisabled: Boolean,
     val iconBitmap: android.graphics.Bitmap?
 )
@@ -103,7 +188,7 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
             receivers = items
             isLoading = false
             val disabledCount = items.count { it.isDisabled }
-            addLog("自启广播扫描完成：发现 ${items.size} 个接收组件，${disabledCount} 个已限制自启")
+            addLog("自启广播扫描完成：发现 ${items.size} 个接收组件，${disabledCount} 个已禁用自启")
         }
     }
 
@@ -119,9 +204,10 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                     item.componentShort.contains(searchQuery, ignoreCase = true)
 
             val matchesTab = when (activeTab) {
-                BootFilterTab.ALL -> true
-                BootFilterTab.USER -> !item.isSystem
-                BootFilterTab.SYSTEM -> item.isSystem
+                // 默认列表不显示已禁用的项，已禁用的统一收拢到"已限制"tab 展示
+                BootFilterTab.ALL -> !item.isDisabled
+                BootFilterTab.USER -> !item.isSystem && !item.isDisabled
+                BootFilterTab.SYSTEM -> item.isSystem && !item.isDisabled
                 BootFilterTab.DISABLED_USER -> !item.isSystem && item.isDisabled
                 BootFilterTab.DISABLED_SYSTEM -> item.isSystem && item.isDisabled
             }
@@ -163,8 +249,8 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
 
         // 说明标语
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)) {
-            Text("硬裁撤组件 (pm disable) + AppOps 限制开机广播，不影响手动点击打开", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
-            Text("已安全排除 SystemUI、电话、核心桌面、闹钟等关键核心服务", style = MaterialTheme.typography.labelSmall, color = iOSGreen)
+            Text("组件级禁用开机自启广播 (pm disable)，不影响正常使用和消息推送", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Text("已安全排除 SystemUI、核心桌面、系统框架等关键核心服务", style = MaterialTheme.typography.labelSmall, color = iOSGreen)
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -218,25 +304,46 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
             iOSOutlineButton(
                 modifier = Modifier.weight(1f),
                 onClick = {
-                    if (isBatchProcessing || isLoading) return@iOSOutlineButton
-                    if (activeTab == BootFilterTab.SYSTEM || activeTab == BootFilterTab.DISABLED_SYSTEM) {
-                        Toast.makeText(context, "⚠️ 为保障系统稳定，禁止批量一键禁用系统组件！请切至【第三方】页操作。", Toast.LENGTH_LONG).show()
+                    if (isBatchProcessing || isLoading) {
+                        Toast.makeText(context, "正在处理中，请稍候...", Toast.LENGTH_SHORT).show()
                         return@iOSOutlineButton
                     }
-                    val toDisable = filteredList.filter { !it.isDisabled && !it.isSystem }
+                    // 可禁对象：未禁用的第三方 + 未禁用的"不重要系统应用"；一般系统应用自动跳过
+                    val toDisable = filteredList.filter {
+                        !it.isDisabled && (!it.isSystem || !it.isGeneralSystem)
+                    }
+                    val skippedGeneral = filteredList.count { !it.isDisabled && it.isSystem && it.isGeneralSystem }
                     if (toDisable.isEmpty()) {
-                        Toast.makeText(context, "当前视图中没有可禁用的第三方应用", Toast.LENGTH_SHORT).show()
+                        val msg = if (skippedGeneral > 0)
+                            "本页仅剩受保护的一般系统应用，无法一键禁用"
+                        else
+                            "当前视图中没有可禁用的应用"
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         return@iOSOutlineButton
                     }
                     isBatchProcessing = true
                     coroutineScope.launch(Dispatchers.IO) {
+                        var success = 0
+                        var failure = 0
                         for (item in toDisable) {
-                            val cmd = "cmd appops set ${item.packageName} RUN_IN_BACKGROUND deny; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND deny"
-                            ShizukuUtils.executeCommand(cmd)
+                            // 组件级 pm disable-user 在 Android 15+ 静默失效（实测返回 new state: default 但未生效），
+                            // 统一改用全局 pm disable，真机验证可正常写入 COMPONENT_ENABLED_STATE_DISABLED
+                            val cmd = "pm disable '${item.fullComponent}'"
+                            try {
+                                val r = ShizukuUtils.executeCommand(cmd)
+                                if (r.isSuccess) success++ else failure++
+                            } catch (e: Exception) {
+                                failure++
+                            }
                         }
                         withContext(Dispatchers.Main) {
                             isBatchProcessing = false
-                            Toast.makeText(context, "已批量限制 ${toDisable.size} 个第三方应用后台自启", Toast.LENGTH_SHORT).show()
+                            val skipNote = if (skippedGeneral > 0) "，跳过 $skippedGeneral 个受保护系统应用" else ""
+                            val msg = if (failure == 0)
+                                "已批量禁用 $success 个应用开机自启$skipNote"
+                            else
+                                "批量禁用完成：成功 $success 个，失败 $failure 个$skipNote"
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             reloadScan()
                         }
                     }
@@ -248,7 +355,10 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
             iOSButton(
                 modifier = Modifier.weight(1f),
                 onClick = {
-                    if (isBatchProcessing || isLoading) return@iOSButton
+                    if (isBatchProcessing || isLoading) {
+                        Toast.makeText(context, "正在处理中，请稍候...", Toast.LENGTH_SHORT).show()
+                        return@iOSButton
+                    }
                     val toEnable = filteredList.filter { it.isDisabled }
                     if (toEnable.isEmpty()) {
                         Toast.makeText(context, "当前视图中没有已禁用的应用", Toast.LENGTH_SHORT).show()
@@ -256,13 +366,24 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                     }
                     isBatchProcessing = true
                     coroutineScope.launch(Dispatchers.IO) {
+                        var success = 0
+                        var failure = 0
                         for (item in toEnable) {
-                            val cmd = "pm enable '${item.packageName}' 2>/dev/null; cmd appops set ${item.packageName} RUN_IN_BACKGROUND allow; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND allow"
-                            ShizukuUtils.executeCommand(cmd)
+                            val cmd = "pm enable '${item.fullComponent}'"
+                            try {
+                                val r = ShizukuUtils.executeCommand(cmd)
+                                if (r.isSuccess) success++ else failure++
+                            } catch (e: Exception) {
+                                failure++
+                            }
                         }
                         withContext(Dispatchers.Main) {
                             isBatchProcessing = false
-                            Toast.makeText(context, "已批量恢复 ${toEnable.size} 个应用后台自启", Toast.LENGTH_SHORT).show()
+                            val msg = if (failure == 0)
+                                "已批量恢复 $success 个应用开机自启"
+                            else
+                                "批量恢复完成：成功 $success 个，失败 $failure 个"
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             reloadScan()
                         }
                     }
@@ -349,12 +470,23 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
-                                        color = if (item.isSystem) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
+                                        color = when {
+                                            item.isSystem && item.isGeneralSystem -> Color(0xFFFFF3E0)
+                                            item.isSystem -> Color(0xFFFFE0B2)
+                                            else -> Color(0xFFE8F5E9)
+                                        }
                                     ) {
                                         Text(
-                                            text = if (item.isSystem) "系统" else "第三方",
+                                            text = when {
+                                                item.isSystem && item.isGeneralSystem -> "系统·受保护"
+                                                item.isSystem -> "系统"
+                                                else -> "第三方"
+                                            },
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (item.isSystem) Color(0xFFE65100) else Color(0xFF2E7D32),
+                                            color = when {
+                                                item.isSystem -> Color(0xFFE65100)
+                                                else -> Color(0xFF2E7D32)
+                                            },
                                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                         )
                                     }
@@ -377,12 +509,20 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                                 Switch(
                                     checked = !item.isDisabled,
                                     onCheckedChange = { enable ->
+                                        // 一般系统应用受保护：禁止通过单个开关禁用，避免误停影响系统体验
+                                        if (!enable && item.isSystem && item.isGeneralSystem) {
+                                            Toast.makeText(
+                                                context,
+                                                "一般系统应用受保护，无法禁用，避免影响系统体验",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } else {
                                         processingComponent = item.fullComponent
                                         coroutineScope.launch {
                                             val cmd = if (enable)
-                                                "cmd appops set ${item.packageName} RUN_IN_BACKGROUND allow; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND allow; pm enable '${item.packageName}' 2>/dev/null"
+                                                "pm enable '${item.fullComponent}'"
                                             else
-                                                "cmd appops set ${item.packageName} RUN_IN_BACKGROUND deny; cmd appops set ${item.packageName} RUN_ANY_IN_BACKGROUND deny"
+                                                "pm disable '${item.fullComponent}'"
 
                                             val result = withContext(Dispatchers.IO) {
                                                 ShizukuUtils.executeCommand(cmd)
@@ -393,12 +533,13 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
                                                 receivers = receivers.map {
                                                     if (it.fullComponent == item.fullComponent) it.copy(isDisabled = targetState) else it
                                                 }
-                                                val msg = if (targetState) "已禁用 ${item.appLabel} 自启" else "已恢复 ${item.appLabel} 自启"
+                                                val msg = if (targetState) "已禁用 ${item.appLabel} 开机自启" else "已恢复 ${item.appLabel} 开机自启"
                                                 addLog(msg)
                                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                             } else {
                                                 Toast.makeText(context, "操作失败: ${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
                                             }
+                                        }
                                         }
                                     },
                                     colors = SwitchDefaults.colors(
@@ -420,60 +561,70 @@ fun BootManagerScreen(context: Context, addLog: (String) -> Unit, onBack: () -> 
 private fun scanBootReceivers(context: Context): List<BootReceiverItem> {
     val pm = context.packageManager
 
-    // 1. 查询当前 AppOps 后台自启限制列表 (RUN_IN_BACKGROUND / RUN_ANY_IN_BACKGROUND)
-    val disabledAppOpsOutput = ShizukuUtils.executeCommand("cmd appops query-op RUN_IN_BACKGROUND ignore 2>/dev/null; cmd appops query-op RUN_IN_BACKGROUND deny 2>/dev/null; cmd appops query-op RUN_ANY_IN_BACKGROUND ignore 2>/dev/null; cmd appops query-op RUN_ANY_IN_BACKGROUND deny 2>/dev/null")
-        .getOrElse { "" }
-    val appOpsDisabledPkgs = disabledAppOpsOutput.lines()
-        .map { it.trim() }
-        .filter { it.contains(".") && !it.contains(" ") }
-        .toSet()
-
-    // 2. 遍历手机上安装的所有应用包（第三方应用 + 非核心系统应用）
-    val installedApps = try {
-        pm.getInstalledApplications(PackageManager.MATCH_DISABLED_COMPONENTS)
+    // 查询所有注册了 BOOT_COMPLETED 的广播接收器组件（含已被禁用的组件）
+    val bootIntent = Intent("android.intent.action.BOOT_COMPLETED")
+    val resolveList = try {
+        pm.queryBroadcastReceivers(
+            bootIntent,
+            PackageManager.MATCH_DISABLED_COMPONENTS or
+                    PackageManager.MATCH_DIRECT_BOOT_AWARE or
+                    PackageManager.MATCH_DIRECT_BOOT_UNAWARE
+        )
     } catch (e: Exception) {
         emptyList()
     }
 
     val items = mutableListOf<BootReceiverItem>()
-    for (appInfo in installedApps) {
-        val pkg = appInfo.packageName
+    val seen = mutableSetOf<String>()
+
+    for (resolveInfo in resolveList) {
+        val activityInfo = resolveInfo.activityInfo ?: continue
+        val pkg = activityInfo.packageName
+        val receiverName = activityInfo.name ?: continue
 
         // 排除核心系统保护白名单
         if (pkg in CORE_SYSTEM_WHITELIST || pkg.startsWith("android.") || pkg == "com.xiaomi.xmsf") continue
+        // manifest 中已永久禁用的组件无自启能力，无需管理
+        if (!activityInfo.enabled) continue
 
-        val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-        val label = try { appInfo.loadLabel(pm).toString() } catch (e: Exception) { pkg }
+        val component = "$pkg/$receiverName"
+        if (!seen.add(component)) continue
 
-        // 检查该应用后台自启是否处于限制状态
-        var isDisabled = pkg in appOpsDisabledPkgs
+        val isSystem = (activityInfo.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM)) != 0
+        val label = try {
+            activityInfo.applicationInfo?.loadLabel(pm)?.toString() ?: pkg
+        } catch (e: Exception) { pkg }
 
-        if (!isDisabled) {
-            try {
-                val state = pm.getApplicationEnabledSetting(pkg)
-                if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
-                    state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
-                    isDisabled = true
-                }
-            } catch (_: Exception) {}
-        }
+        // 组件级 enabled 状态判断（pm disable-user 后此处返回 DISABLED_USER）
+        var isDisabled = false
+        try {
+            val state = pm.getComponentEnabledSetting(ComponentName(pkg, receiverName))
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ||
+                state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
+                isDisabled = true
+            }
+        } catch (_: Exception) {}
 
         val icon: android.graphics.Bitmap? = try {
-            val drawable = appInfo.loadIcon(pm)
-            val bmp = android.graphics.Bitmap.createBitmap(72, 72, android.graphics.Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(bmp)
-            drawable.setBounds(0, 0, 72, 72)
-            drawable.draw(canvas)
-            bmp
+            val drawable = activityInfo.applicationInfo?.loadIcon(pm)
+            if (drawable != null) {
+                val bmp = android.graphics.Bitmap.createBitmap(72, 72, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bmp)
+                drawable.setBounds(0, 0, 72, 72)
+                drawable.draw(canvas)
+                bmp
+            } else null
         } catch (e: Exception) { null }
 
         items.add(
             BootReceiverItem(
                 packageName = pkg,
                 appLabel = label,
-                fullComponent = pkg,
-                componentShort = pkg,
+                fullComponent = component,
+                componentShort = receiverName.substringAfterLast('.'),
                 isSystem = isSystem,
+                isGeneralSystem = isSystem && pkg in GENERAL_SYSTEM_WHITELIST,
                 isDisabled = isDisabled,
                 iconBitmap = icon
             )

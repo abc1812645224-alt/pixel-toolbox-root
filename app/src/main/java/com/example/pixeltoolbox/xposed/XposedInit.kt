@@ -36,6 +36,7 @@ internal const val TOOLBOX_PKG = "com.example.pixeltoolbox"
 internal const val KEY_DT2S = "dt2s"
 internal const val KEY_HIDE_SEARCH = "hide_search_bar"
 internal const val KEY_HIDE_GESTURE_LINE = "hide_gesture_line"
+internal const val KEY_LOCK_CHARGE_POWER = "lock_charge_power"
 internal const val KEY_SMS_CODE = "sms_code"
 internal const val KEY_FREE_FORM = "freeform"
 
@@ -54,6 +55,7 @@ internal data class Toggles(
     val dt2s: Boolean,
     val hideSearch: Boolean,
     val hideGestureLine: Boolean,
+    val lockChargePower: Boolean,
     val smsCode: Boolean,
     val freeForm: Boolean
 ) {
@@ -62,7 +64,7 @@ internal data class Toggles(
         get() = true
 
     companion object {
-        val NONE = Toggles(false, false, false, false, false)
+        val NONE = Toggles(false, false, false, false, false, false)
     }
 }
 
@@ -94,7 +96,7 @@ class XposedInit : XposedModule() {
         try {
             when (pkg) {
                 PROC_NEXUS_LAUNCHER -> LauncherHooks(this, toggles.hideSearch, toggles.dt2s, toggles.hideGestureLine, param.defaultClassLoader).apply()
-                PROC_SYSTEMUI -> SystemUiHooks(this, toggles.hideGestureLine, param.defaultClassLoader).apply()
+                PROC_SYSTEMUI -> SystemUiHooks(this, toggles.hideGestureLine, toggles.lockChargePower, param.defaultClassLoader).apply()
                 PROC_PHONE -> SmsCodeHooks(this, param.defaultClassLoader).apply()
                 PROC_WECHAT, PROC_QQ -> TencentPushHooks(this, param.defaultClassLoader).apply()
             }
@@ -148,10 +150,11 @@ class XposedInit : XposedModule() {
                 dt2s = readBool(KEY_DT2S),
                 hideSearch = readBool(KEY_HIDE_SEARCH),
                 hideGestureLine = readBool(KEY_HIDE_GESTURE_LINE),
+                lockChargePower = readBool(KEY_LOCK_CHARGE_POWER),
                 smsCode = readBool(KEY_SMS_CODE),
                 freeForm = readBool(KEY_FREE_FORM)
             )
-            log(3, "XposedInit", "read toggles via file: dt2s=${t.dt2s} hideSearch=${t.hideSearch} hideGestureLine=${t.hideGestureLine}")
+            log(3, "XposedInit", "read toggles via file: dt2s=${t.dt2s} hideSearch=${t.hideSearch} hideGestureLine=${t.hideGestureLine} lockChargePower=${t.lockChargePower}")
             t
         } catch (t: Throwable) {
             log(6, "XposedInit", "read file error: ${t.message}", t)

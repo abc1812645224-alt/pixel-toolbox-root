@@ -18,6 +18,7 @@ import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.io.BufferedReader
 import java.io.DataOutputStream
+import java.util.concurrent.TimeUnit
 
 private object PersistentRootShell {
     private var process: Process? = null
@@ -27,6 +28,12 @@ private object PersistentRootShell {
 
     private var lastFailureTime = 0L
     private val COOLDOWN_MS = 15_000L
+
+    /** exec 超时：命令在指定时间内未读完输出则判定 shell 挂起，销毁避免永久阻塞 */
+    private val EXEC_TIMEOUT_MS = 30_000L
+
+    /** exec 阻塞读取执行器 */
+    private val EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun isInCooldown(): Boolean =
         lastFailureTime > 0 && System.currentTimeMillis() - lastFailureTime < COOLDOWN_MS
@@ -79,13 +86,28 @@ private object PersistentRootShell {
                 o.writeBytes("$cmd\n")
                 o.writeBytes("echo \"---EOF---\"\n")
                 o.flush()
-                val sb = java.lang.StringBuilder()
-                while (true) {
-                    val line = r.readLine() ?: break
-                    if (line == "---EOF---") break
-                    sb.append(line).append("\n")
+                // 超时保护：阻塞读取放入 Future，超时则销毁 shell 返回 null，
+                // 避免 root 命令永久阻塞导致批量操作状态卡死（无响应）。
+                val future = EXECUTOR.submit<String> {
+                    val sb = java.lang.StringBuilder()
+                    while (true) {
+                        val line = r.readLine() ?: break
+                        if (line == "---EOF---") break
+                        sb.append(line).append("\n")
+                    }
+                    sb.toString().trim()
                 }
-                return sb.toString().trim()
+                return try {
+                    future.get(EXEC_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                } catch (e: Exception) {
+                    future.cancel(true)
+                    try { process?.destroy() } catch (_: Exception) {}
+                    process = null
+                    out = null
+                    reader = null
+                    markFailure()
+                    null
+                }
             } catch (e: Exception) {
                 try { process?.destroy() } catch (_: Exception) {}
                 process = null
@@ -811,6 +833,59 @@ object RootUtils {
     fun isAlipayModuleInstalled(): Boolean {
         val res = executeCommandOrNull("ls -d /data/adb/modules/*alipay* /data/adb/modules_update/*alipay* 2>/dev/null")
         return !res.isNullOrBlank() && res.contains("alipay")
+    }
+
+    /**
+     * Hosts 去广告开关（bind mount 方案，即时生效无需重启）
+     * 开启：把广告域名列表写入 /data/local/tmp/pixeltoolbox_hosts，再 bind mount 到 /system/etc/hosts
+     * 关闭：umount 恢复系统原始 hosts
+     * 已开启状态下再次调用 = 刷新域名列表
+     */
+    fun applyHostsAdBlock(context: Context): Result<String> {
+        val moduleDir = "/data/adb/modules/pixeltoolbox_hosts"
+        return try {
+            val installedOut = executeCommandVerbose("test -d $moduleDir && echo YES || echo NO")
+            Log.d(TAG, "applyHostsAdBlock: check raw='${installedOut.getOrNull()}' err=${installedOut.exceptionOrNull()?.message}")
+            val installed = installedOut.getOrNull()?.contains("YES") == true
+            if (installed) {
+                // 已开启 -> 关闭：移除模块，重启后解除 magic mount 恢复系统 hosts
+                val close = executeCommandVerbose("rm -rf $moduleDir && echo done")
+                Log.d(TAG, "applyHostsAdBlock: close raw='${close.getOrNull()}' err=${close.exceptionOrNull()?.message}")
+                if (close.isSuccess) Result.success("Hosts 去广告已关闭，重启手机后完全生效") else close
+            } else {
+                val domains = context.assets.open("ad_block_hosts.txt").bufferedReader().readLines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") }
+                Log.d(TAG, "applyHostsAdBlock: domains=${domains.size}")
+                if (domains.isEmpty()) return Result.failure(Exception("广告域名列表为空"))
+                val sb = StringBuilder()
+                sb.append("127.0.0.1 localhost\n")
+                sb.append("::1 ip6-localhost ip6-loopback\n")
+                sb.append("# Pixel Toolbox AdBlock\n")
+                domains.forEach { sb.append("0.0.0.0 ").append(it).append("\n") }
+
+                // 直接创建 Magisk hosts 模块（绕开 zip 解压，手动写文件）
+                val mkdir = executeCommandVerbose("mkdir -p $moduleDir/system/etc && echo MKDIR_OK")
+                Log.d(TAG, "applyHostsAdBlock: mkdir raw='${mkdir.getOrNull()}' err=${mkdir.exceptionOrNull()?.message}")
+                val propContent = ("id=pixeltoolbox_hosts\nname=PixelToolbox Hosts AdBlock\nversion=v1\nversionCode=1\nauthor=PixelToolbox\ndescription=hosts ad block\n")
+                    .toByteArray(Charsets.UTF_8)
+                val propWrite = executeCommandWithStdin("cat > $moduleDir/module.prop && echo PROP_OK", propContent)
+                Log.d(TAG, "applyHostsAdBlock: propWrite raw='${propWrite.getOrNull()}' err=${propWrite.exceptionOrNull()?.message}")
+                val hostsWrite = executeCommandWithStdin("cat > $moduleDir/system/etc/hosts && echo HOSTS_OK", sb.toString().toByteArray(Charsets.UTF_8))
+                Log.d(TAG, "applyHostsAdBlock: hostsWrite raw='${hostsWrite.getOrNull()}' err=${hostsWrite.exceptionOrNull()?.message}")
+                val verify = executeCommandVerbose("ls -la $moduleDir/system/etc/hosts && grep -c '^0.0.0.0' $moduleDir/system/etc/hosts")
+                Log.d(TAG, "applyHostsAdBlock: verify raw='${verify.getOrNull()}' err=${verify.exceptionOrNull()?.message}")
+                if (mkdir.isSuccess && propWrite.isSuccess && hostsWrite.isSuccess) {
+                    Result.success("Hosts 去广告已开启，重启手机后生效（Android 17 需重启加载 hosts）")
+                } else {
+                    executeCommandVerbose("rm -rf $moduleDir")
+                    Result.failure(Exception("模块写入失败"))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "applyHostsAdBlock exception", e)
+            Result.failure(e)
+        }
     }
 
     /**

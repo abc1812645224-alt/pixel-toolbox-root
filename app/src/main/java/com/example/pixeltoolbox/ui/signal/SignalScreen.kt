@@ -174,7 +174,8 @@ fun SignalScreen(
                 simSlots = simSlots,
                 selectedSubId = selectedSubId,
                 onSelectSubId = { selectedSubId = it },
-                addLog = addLog
+                addLog = addLog,
+                executionLogs = executionLogs
             )
         // ========== 还原所有设置 ==========
         Spacer(modifier = Modifier.height(16.dp))

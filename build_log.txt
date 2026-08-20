@@ -1,0 +1,108 @@
+
+> Configure project :app
+WARNING: The option setting 'android.overridePathCheck=true' is experimental.
+The current default is 'false'.
+WARNING: We recommend using a newer Android Gradle plugin to use compileSdk = 36
+
+This Android Gradle plugin (8.2.0) was tested up to compileSdk = 34.
+
+You are strongly encouraged to update your project to use a newer
+Android Gradle plugin that has been tested with compileSdk = 36.
+
+If you are already using the latest version of the Android Gradle plugin,
+you may need to wait until a newer version with support for compileSdk = 36 is available.
+
+To suppress this warning, add/update
+    android.suppressUnsupportedCompileSdk=36
+to this project's gradle.properties.
+
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :stub:preBuild UP-TO-DATE
+> Task :stub:preDebugBuild UP-TO-DATE
+> Task :stub:compileDebugAidl UP-TO-DATE
+> Task :app:compileDebugAidl UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :stub:generateDebugResValues UP-TO-DATE
+> Task :stub:generateDebugResources UP-TO-DATE
+> Task :stub:packageDebugResources UP-TO-DATE
+> Task :stub:parseDebugLocalResources UP-TO-DATE
+> Task :stub:processDebugManifest UP-TO-DATE
+> Task :stub:generateDebugRFile UP-TO-DATE
+> Task :stub:javaPreCompileDebug UP-TO-DATE
+> Task :stub:compileDebugJavaWithJavac UP-TO-DATE
+> Task :stub:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :stub:mergeDebugJniLibFolders UP-TO-DATE
+> Task :stub:mergeDebugNativeLibs NO-SOURCE
+> Task :stub:stripDebugDebugSymbols NO-SOURCE
+> Task :stub:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :stub:extractDebugAnnotations UP-TO-DATE
+> Task :stub:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :stub:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :stub:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :stub:mergeDebugShaders UP-TO-DATE
+> Task :stub:compileDebugShaders NO-SOURCE
+> Task :stub:generateDebugAssets UP-TO-DATE
+> Task :stub:packageDebugAssets UP-TO-DATE
+> Task :stub:prepareDebugArtProfile UP-TO-DATE
+> Task :stub:prepareLintJarForPublish UP-TO-DATE
+> Task :stub:processDebugJavaRes NO-SOURCE
+> Task :stub:mergeDebugJavaResource UP-TO-DATE
+> Task :stub:syncDebugLibJars UP-TO-DATE
+> Task :stub:writeDebugAarMetadata UP-TO-DATE
+> Task :stub:bundleDebugAar UP-TO-DATE
+> Task :stub:assembleDebug UP-TO-DATE
+> Task :app:kaptGenerateStubsDebugKotlin
+> Task :app:kaptDebugKotlin UP-TO-DATE
+> Task :app:compileDebugKotlin
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:hiltAggregateDepsDebug UP-TO-DATE
+> Task :app:hiltJavaCompileDebug UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:transformDebugClassesWithAsm
+> Task :app:dexBuilderDebug
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 6s
+63 actionable tasks: 7 executed, 56 up-to-date

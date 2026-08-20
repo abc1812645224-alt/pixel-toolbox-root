@@ -419,11 +419,18 @@ fun SystemScreen(
                     modifier = Modifier.weight(1f),
                     onClick = {
                         coroutineScope.launch {
-                            val cmd = "settings put global private_dns_mode hostname && settings put global private_dns_specifier dns.adguard.com"
-                            handleResult(context, ShizukuUtils.executeCommand(cmd), "去广告 DNS 已开启", addLog)
+                            val res = com.example.pixeltoolbox.utils.RootUtils.applyHostsAdBlock(context)
+                            res.onSuccess {
+                                addLog(it)
+                                Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                            }.onFailure { e ->
+                                val errorMsg = "操作失败: ${e.message}"
+                                addLog(errorMsg)
+                                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
-                ) { Text("全局\n去广", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center) }
+                ) { Text("Hosts\n去广", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center) }
                 iOSButton(
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -441,7 +448,6 @@ fun SystemScreen(
     var dt2sEnabled by remember { mutableStateOf(false) }
     var hideSearchEnabled by remember { mutableStateOf(false) }
     var hideGestureLineEnabled by remember { mutableStateOf(false) }
-    var showRebootDialog by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
         dt2sEnabled = prefs.getBoolean("dt2s", false)
@@ -491,8 +497,8 @@ fun SystemScreen(
                 val onHideGestureLineClick = {
                     val newValue = !hideGestureLineEnabled
                     hideGestureLineEnabled = newValue
-                    persistXposedToggle(context, "hide_gesture_line", newValue, restart = false)
-                    showRebootDialog = true
+                    persistXposedToggle(context, "hide_gesture_line", newValue)
+                    Toast.makeText(context, if (newValue) "去小白条已生效" else "去小白条已恢复", Toast.LENGTH_LONG).show()
                 }
                 if (hideGestureLineEnabled) {
                     iOSButton(modifier = Modifier.weight(1f), onClick = onHideGestureLineClick) {
@@ -506,23 +512,38 @@ fun SystemScreen(
             }
         }
     }
-    if (showRebootDialog) {
-        AlertDialog(
-            onDismissRequest = { showRebootDialog = false },
-            title = { Text("需重启手机生效") },
-            text = { Text("「去小白条」开关已写入，需重启手机后才会生效。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showRebootDialog = false
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        RootUtils.executeCommand("reboot")
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // 锁屏充电功率（置于 LSPosed 桌面定制下方，归属 SystemUI 进程）
+    var lockChargePowerEnabled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("xposed_prefs", Context.MODE_PRIVATE)
+        lockChargePowerEnabled = prefs.getBoolean("lock_charge_power", false)
+    }
+
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text("锁屏充电功率", style = MaterialTheme.typography.titleLarge, color = iOSLabel)
+            Text("充电时在锁屏充电提示下追加实时功率（电流×电压）与温度", style = MaterialTheme.typography.bodySmall, color = iOSSecondaryLabel)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val onLockChargePowerClick = {
+                    val newValue = !lockChargePowerEnabled
+                    lockChargePowerEnabled = newValue
+                    persistXposedToggle(context, "lock_charge_power", newValue)
+                    Toast.makeText(context, if (newValue) "锁屏充电功率已开启，需完全重启后生效" else "锁屏充电功率已关闭，需完全重启后生效", Toast.LENGTH_LONG).show()
+                }
+                if (lockChargePowerEnabled) {
+                    iOSButton(modifier = Modifier.weight(1f), onClick = onLockChargePowerClick) {
+                        Text("锁屏充电功率\n(已开启)", color = Color.White, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                     }
-                }) { Text("立即重启") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRebootDialog = false }) { Text("取消") }
+                } else {
+                    iOSOutlineButton(modifier = Modifier.weight(1f), onClick = onLockChargePowerClick) {
+                        Text("锁屏充电功率\n(未开启)", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                    }
+                }
             }
-        )
+        }
     }
     Spacer(modifier = Modifier.height(16.dp))
 
@@ -982,8 +1003,10 @@ private fun persistXposedToggle(context: Context, key: String, value: Boolean, r
         }
     }
 
-    val restartTarget = if (key == "hide_gesture_line") "com.android.systemui"
-                        else "com.google.android.apps.nexuslauncher"
+    val restartTarget = when (key) {
+        "hide_gesture_line", "lock_charge_power" -> "com.android.systemui"
+        else -> "com.google.android.apps.nexuslauncher"
+    }
     val effectiveTarget = if (key == "sms_code") null else (if (restart) restartTarget else null)
     syncXposedConfig(context, effectiveTarget)
 }
@@ -997,12 +1020,14 @@ private fun syncXposedConfig(context: Context, restartTarget: String?) {
     val dt2s = prefs.getBoolean("dt2s", false)
     val hideSearch = prefs.getBoolean("hide_search_bar", false)
     val hideGesture = prefs.getBoolean("hide_gesture_line", false)
+    val lockChargePower = prefs.getBoolean("lock_charge_power", false)
     val smsCode = prefs.getBoolean("sms_code", false)
 
     val lines = mutableListOf<String>()
     lines += "dt2s=$dt2s"
     lines += "hide_search_bar=$hideSearch"
     lines += "hide_gesture_line=$hideGesture"
+    lines += "lock_charge_power=$lockChargePower"
     lines += "sms_code=$smsCode"
 
     val echoParts = lines.mapIndexed { i, line ->
